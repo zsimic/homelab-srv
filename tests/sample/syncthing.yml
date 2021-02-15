@@ -14,6 +14,4 @@ services:
       - 21027:21027/udp
     restart: unless-stopped
     volumes:
-      - /srv/persist/syncthing:/config  # Syncthing's own config
-      - /srv/data:/data                 # Typically on system disk
-      - /mnt/extdisk:/extdisk           # Typically external bigger disk (will depend on host)
+      - /srv/persist/syncthing:/config    # Shouldn't be auto-backed up, even if config looks like it should be

@@ -29,7 +29,7 @@ DEFAULT_BACKUP_FOLDER = "/srv/data/server-backup"
 SRV = Path("/srv")
 PERSIST = SRV / "persist"
 SRV_RUN = SRV / "run"
-SRV_YML = "srv.yml"
+CONFIG_YML = "_config.yml"
 SPECIAL_DOCKER_COMPOSE_NAME = ["syncthing"]
 
 
@@ -45,11 +45,7 @@ class GlobalState:
     @runez.cached_property
     def hostname(self):
         cmd = "/bin/hostname"
-        if os.path.exists(cmd):
-            return runez.run(cmd, dryrun=False).output
-
-        else:
-            return os.environ.get("COMPUTERNAME") or ""
+        return runez.run(cmd, dryrun=False).output if os.path.exists(cmd) else os.environ.get("COMPUTERNAME") or ""
 
     @runez.cached_property
     def is_executor(self):
@@ -78,14 +74,8 @@ def read_yml(path: Path, default=None):
 
 
 def slash_trail(path, trail=False):
-    if trail:
-        if not path.endswith("/"):
-            return path + "/"
-
-    elif path.endswith("/"):
-        path = path.rstrip("/")
-
-    return path
+    path = path.rstrip("/")
+    return "%s/" % path if trail else path
 
 
 def run_rsync(src, dest, sudo=False, env=None):
@@ -244,7 +234,7 @@ class DCService(DCItem):
 
 
 class SYRun(DCItem):
-    """run entry in srv.yml"""
+    """'run:' entry in _config.yml"""
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -259,14 +249,14 @@ class SYRun(DCItem):
 
     def sanity_check(self):
         if not self.hostnames:
-            yield self, "no hosts are defined in srv.yml run: section"
+            yield self, "no hosts are defined in %s run: section" % CONFIG_YML
 
         for hostname, dc_names in self.dcs_by_host.items():
-            yield from self.dc_config.dc_name_check(dc_names, "srv.yml:run/%s" % hostname)
+            yield from self.dc_config.dc_name_check(dc_names, "%s:run/%s" % (CONFIG_YML, hostname))
 
 
 class SYBackup(DCItem):
-    """backup: entry in srv.yml"""
+    """'backup:' entry in _config.yml"""
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -282,8 +272,8 @@ class SYBackup(DCItem):
         return dest / dc.dc_name
 
     def sanity_check(self):
-        yield from self.dc_config.dc_name_check(self.per_host, "srv.yml:backup/per_host")
-        yield from self.dc_config.dc_name_check(self.restrict, "srv.yml:backup/restrict")
+        yield from self.dc_config.dc_name_check(self.per_host, "%s:backup/per_host" % CONFIG_YML)
+        yield from self.dc_config.dc_name_check(self.restrict, "%s:backup/restrict" % CONFIG_YML)
 
 
 class SYDC(DCItem):
@@ -318,21 +308,8 @@ class SYDC(DCItem):
 
             return True
 
-    def require_executor(self, auto=False):
-        if not GSRV.is_executor:
-            runez.abort("This command can only be ran on target hosts (not remotely)")
-
-        should_run = self.dc_config.run.dc_names_for_host(GSRV.hostname)
-        if not should_run or self.dc_name not in should_run:
-            if not auto:
-                logging.info("'%s' is not configured to run on host '%s'" % (self.dc_name, GSRV.hostname))
-
-            return True
-
     def backup(self, invert=False, auto=False):
-        if self.require_executor(auto=auto):
-            return
-
+        assert GSRV.is_executor
         action = "restoring" if invert else "backing up"
         if not self.vanilla_backup:
             if not auto:
@@ -342,7 +319,7 @@ class SYDC(DCItem):
 
         if self.is_special:
             if not auto:
-                logging.info("Not %s '%s': is special" % (action, self.dc_name))
+                logging.info("Not %s '%s': special container" % (action, self.dc_name))
 
             return
 
@@ -369,22 +346,16 @@ class SYDC(DCItem):
         self.backup(invert=True, auto=auto)
 
     def start(self):
-        if self.require_executor():
-            return
-
+        assert GSRV.is_executor
         self.run_docker_compose("up", "-d")
 
     def stop(self):
-        if self.require_executor():
-            return
-
+        assert GSRV.is_executor
         self.run_docker_compose("stop")
         self.backup()
 
     def upgrade(self):
-        if self.require_executor():
-            return
-
+        assert GSRV.is_executor
         self.run_docker_compose("down")
         self.backup()
         self.run_docker_compose("pull")
@@ -400,22 +371,22 @@ def find_base_folder() -> (Path, str):
         configured = runez.readlines(CONFIG_PATH, default=None, first=1)
         if configured and configured[0]:
             path = os.path.expanduser(configured[0])
-            if path.endswith(SRV_YML):
+            if path.endswith(CONFIG_YML):
                 path = os.path.dirname(path)
 
             if os.path.isdir(path):
                 return Path(path), CONFIG_PATH
 
-    local = Path(os.getcwd()) / SRV_YML
+    local = Path(os.getcwd()) / CONFIG_YML
     if local.exists():
-        logging.info("Using srv.yml from current working dir: %s" % local)
+        logging.info("Using %s from current working dir: %s" % (CONFIG_YML, local))
         return local.parent, "cwd"
 
     return None, None
 
 
 class SrvFolder:
-    """Config as defined by {folder}/srv.yml"""
+    """Config as defined by {folder}/_config.yml"""
 
     def __init__(self, folder=None):
         self.folder_origin = None
@@ -426,13 +397,13 @@ class SrvFolder:
             folder = Path(folder)
 
         self.folder = folder
-        self.srv_yml = self.folder and (self.folder / SRV_YML)
-        self.cfg = read_yml(self.srv_yml) or {}
+        self.cfg_yml = self.folder and (self.folder / CONFIG_YML)
+        self.cfg = read_yml(self.cfg_yml) or {}
         self.dc_files = {}  # type: dict[str, SYDC]
 
         if self.folder and self.folder.is_dir():
             for fname in self.folder.glob("*.yml"):
-                if not fname.samefile(self.srv_yml):
+                if not fname.name.startswith("_"):
                     dc = SYDC(self, fname)
                     self.dc_files[dc.dc_name] = dc
 
@@ -487,11 +458,11 @@ class SrvFolder:
 
     def sanity_check(self):
         if not self.folder:
-            yield self, "Run this to configure where your srv.yml is: %s set-folder PATH" % SCRIPT_NAME
+            yield self, "Run this to configure where your %s is: %s set-folder PATH" % (CONFIG_YML, SCRIPT_NAME)
             return
 
-        if not self.srv_yml.exists():
-            yield self, "%s does not exist" % self.srv_yml
+        if not self.cfg_yml.exists():
+            yield self, "%s does not exist" % self.cfg_yml
             return
 
         if not self.dc_files:
@@ -534,14 +505,18 @@ class CliTarget:
 
     def run(self):
         if GSRV.is_executor:
+            should_run = GSRV.bcfg.run.dc_names_for_host(GSRV.hostname) or []
             for dc in self.dcs:
-                f = getattr(dc, self.command)
-                f()
+                if dc.dc_name not in should_run:
+                    logging.info("'%s' is not configured to run on host '%s'" % (dc.dc_name, GSRV.hostname))
 
-            return
+                else:
+                    f = getattr(dc, self.command)
+                    f()
 
-        for hostname in self.hosts:
-            runez.run("ssh", hostname, SCRIPT_NAME, self.command, self.given)
+        else:
+            for hostname in self.hosts:
+                runez.run("ssh", hostname, SCRIPT_NAME, self.command, self.given)
 
 
 def target_option():
@@ -585,7 +560,7 @@ def main(ctx, debug, simulate):
 @main.command()
 @click.argument("folder")
 def set_folder(folder):
-    """Configure where your srv.yml is"""
+    """Configure where your _config.yml is"""
     GSRV.require_orchestrator()
     folder = folder.strip()
     if not folder:
@@ -595,9 +570,9 @@ def set_folder(folder):
     if not folder.is_dir():
         runez.abort("Folder '%s' does not exist" % folder)
 
-    srv_yml = folder / SRV_YML
-    if not srv_yml.exists():
-        runez.abort("'%s' does not exist" % srv_yml)
+    cfg_yml = folder / CONFIG_YML
+    if not cfg_yml.exists():
+        runez.abort("'%s' does not exist" % cfg_yml)
 
     runez.write(CONFIG_PATH, "%s\n" % folder)
 

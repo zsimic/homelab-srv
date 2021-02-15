@@ -1,7 +1,7 @@
 import pytest
 import runez
 
-from homelab_srv import GSRV, SrvFolder
+from homelab_srv import GSRV, slash_trail, SrvFolder
 
 
 def test_sanity_check(cli):
@@ -24,7 +24,7 @@ def test_runs(cli):
         assert cli.failed
 
         cli.expect_failure("--dryrun set-folder foo", "does not exist")  # No folder
-        cli.expect_failure("--dryrun set-folder ..", "does not exist")  # No srv.yml
+        cli.expect_failure("--dryrun set-folder ..", "does not exist")  # No _config.yml
         cli.expect_success("--dryrun set-folder .", "Would write")
 
         if not runez.WINDOWS:
@@ -51,7 +51,7 @@ def test_runs(cli):
         cli.expect_success("-se:rps backup", "chown=1001")
         cli.expect_success("-se:rph backup pihole", "persist/pihole .../server-backup/rph/pihole", "Port 443 would conflict")
         cli.expect_success("-se:rps restore", "Would run", "Not restoring")
-        cli.expect_success("-se:rps backup syncthing", "Not backing up 'syncthing': it does NOT use volume")
+        cli.expect_success("-se:rps backup syncthing", "Not backing up 'syncthing': special container")
 
         cli.expect_success("--dryrun -so: push", "Would run:...rsync")
 
@@ -68,8 +68,8 @@ def test_sample():
     bogus = SrvFolder(runez.log.tests_path("bogus"))
     problems = str(list(bogus.sanity_check()))
     assert "has no docker-compose files" in problems
-    assert "referred from srv.yml:run/rps" in problems
-    assert "referred from srv.yml:backup/per_host" in problems
+    assert "referred from _config.yml:run/rps" in problems
+    assert "referred from _config.yml:backup/per_host" in problems
 
     empty = SrvFolder(runez.log.tests_path("empty"))
     problems = list(empty.sanity_check())
@@ -84,7 +84,7 @@ def test_sample():
     assert len(cfg.get_dcs()) == 3
     assert len(cfg.get_dcs("all")) == 4
     assert len(cfg.get_dcs("special")) == 1
-    assert len(cfg.get_dcs("vanilla")) == 2
+    assert len(cfg.get_dcs("vanilla")) == 3
     with pytest.raises(BaseException):
         cfg.get_hosts("foo")
 
@@ -93,3 +93,12 @@ def test_sample():
 
     assert cfg.env == {"PGID": "1001", "PUID": "1001", "TZ": "America/Los_Angeles"}
     assert cfg.run.hostnames == ["rps", "rph"]
+
+
+def test_slash_trail():
+    assert slash_trail("foo") == "foo"
+    assert slash_trail("foo/") == "foo"
+    assert slash_trail("foo//") == "foo"
+    assert slash_trail("foo", trail=True) == "foo/"
+    assert slash_trail("foo/", trail=True) == "foo/"
+    assert slash_trail("foo//", trail=True) == "foo/"
