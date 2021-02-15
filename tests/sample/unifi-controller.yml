@@ -1,0 +1,21 @@
+# https://hub.docker.com/r/linuxserver/unifi-controller
+version: "3"
+services:
+  unifi-controller:
+    container_name: unifi-controller
+    image: linuxserver/unifi-controller
+    environment:
+      - PUID=1001
+      - PGID=1001
+    ports:
+      - 3478:3478/udp
+      - 10001:10001/udp
+      - 8080:8080
+      - 8081:8081
+      - 443:8443  # Conflicts with pihole 443 (can't run on same host)
+      - 8843:8843
+      - 8880:8880
+      - 6789:6789
+    restart: unless-stopped
+    volumes:
+      - /srv/persist/unifi-controller:/config/data

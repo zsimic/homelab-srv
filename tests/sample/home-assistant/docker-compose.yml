@@ -1,0 +1,17 @@
+# https://www.home-assistant.io/docs/installation/docker/
+version: "3"
+services:
+  homeassistant:
+    image: homeassistant/home-assistant:stable
+    container_name: home-assistant
+    # devices:
+    #   - /dev/ttyUSB0:/dev/ttyUSB0
+    #   - /dev/ttyUSB1:/dev/ttyUSB1
+    #   - /dev/ttyACM0:/dev/ttyACM0
+    environment:
+      - PUID=123  # Simulating wrong PUID (does not match the one state in srv.yml)
+      - TZ=America/Los_Angeles
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - /srv/persist/foo:/config  # Simulating non-standard location

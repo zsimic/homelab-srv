@@ -1,0 +1,24 @@
+# https://github.com/pi-hole/docker-pi-hole/
+version: "3"
+services:
+  pihole:
+    cap_add:
+      - NET_ADMIN  # For DHCP, https://github.com/pi-hole/docker-pi-hole#note-on-capabilities
+      - SYS_NICE
+    container_name: pihole
+    hostname: pi.hole
+    image: pihole/pihole:latest
+    environment:
+      - PUID=1001
+      - PGID=1001
+      - TZ=America/Los_Angeles
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
+      - "67:67/udp"
+      - "80:80/tcp"
+      - "443:443/tcp"
+    restart: unless-stopped
+    volumes:
+      - /srv/persist/pihole/etc:/etc/pihole
+      - /srv/persist/pihole/dnsmasq.d:/etc/dnsmasq.d

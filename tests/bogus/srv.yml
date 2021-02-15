@@ -1,0 +1,7 @@
+run:
+  rps:
+    - home-assistant  # No docker-compose.yml (in this folder)
+
+backup:
+  per_host:
+    - pihole  # Not defined to run anywhere
