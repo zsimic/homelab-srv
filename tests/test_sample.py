@@ -1,59 +1,13 @@
 import pytest
 import runez
 
-from homelab_srv import GSRV, slash_trail, SrvFolder
+from homelab_srv import C, slash_trail, SrvFolder
 
 
-def test_sanity_check(cli):
-    cli.expect_success("--version")
-    assert cli.succeeded
-    assert "homelab-srv" in cli.logged
-
-
-def test_runs(cli):
-    assert str(GSRV) == GSRV.hostname
-
-    with runez.CurrentFolder(runez.log.tests_path("bogus")):
-        cli.expect_failure("mkpass foo", "Please fix reported issues first")
-
-    # Reset global state (applies to tests only...)
-    del GSRV.bcfg
-
-    with runez.CurrentFolder(runez.log.tests_path("sample")):
-        cli.run("--dryrun", "set-folder", " ")
-        assert cli.failed
-
-        cli.expect_failure("--dryrun set-folder foo", "does not exist")  # No folder
-        cli.expect_failure("--dryrun set-folder ..", "does not exist")  # No _config.yml
-        cli.expect_success("--dryrun set-folder .", "Would write")
-
-        if not runez.WINDOWS:
-            cli.expect_success("mkpass foo")
-
-        cli.expect_failure("--dryrun -se:rps set-folder foo", "can only be ran from orchestrator")
-
-        cli.expect_success("-se:rps status", "executor")
-        assert "syncthing" not in cli.logged
-
-        cli.expect_success("-se:rps status all", "executor")
-        assert "syncthing" in cli.logged
-
-        cli.expect_success("-so:rps status", "orchestrator")
-
-        cli.expect_failure("-se:rph stop rps:home-assistant", "Target host on executor must be self")
-        cli.expect_success("-se:rph stop home-assistant", "not configured to run")
-
-        cli.expect_success("-se:rps stop syncthing", "docker-compose... stop")
-        cli.expect_success("-se:rps start syncthing", "docker-compose... up -d")
-        cli.expect_success("-se:rps upgrade syncthing", "docker-compose... up -d")
-
-        cli.expect_success("-so:rps backup", "ssh rps homelab-srv backup")
-        cli.expect_success("-se:rps backup", "chown=1001")
-        cli.expect_success("-se:rph backup pihole", "persist/pihole .../server-backup/rph/pihole", "Port 443 would conflict")
-        cli.expect_success("-se:rps restore", "Would run", "Not restoring")
-        cli.expect_success("-se:rps backup syncthing", "Not backing up 'syncthing': special container")
-
-        cli.expect_success("--dryrun -so: push", "Would run:...rsync")
+def test_global_state():
+    # Hostname can be replaced in --simulate run mode, make sure test coverage exercises the non-overridden case too
+    gs = C()
+    assert str(gs) == gs.hostname
 
 
 def test_sample():

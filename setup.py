@@ -11,7 +11,7 @@ if __name__ == "__main__":
         python_requires=">=3.7",
         entry_points={
            "console_scripts": [
-               "homelab-srv = homelab_srv:main",
+               "homelab-srv = homelab_srv.cli:main",
             ],
         },
         classifiers=[
