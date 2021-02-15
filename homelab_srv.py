@@ -377,6 +377,9 @@ def find_base_folder() -> (Path, str):
             if os.path.isdir(path):
                 return Path(path), CONFIG_PATH
 
+            else:
+                logging.warning("Path configured in %s is invalid: %s" % (CONFIG_YML, path))
+
     local = Path(os.getcwd()) / CONFIG_YML
     if local.exists():
         logging.info("Using %s from current working dir: %s" % (CONFIG_YML, local))
