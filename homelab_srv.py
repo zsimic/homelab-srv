@@ -311,15 +311,15 @@ class SYDC(DCItem):
     def backup(self, invert=False, auto=False):
         assert GSRV.is_executor
         action = "restoring" if invert else "backing up"
-        if not self.vanilla_backup:
-            if not auto:
-                logging.info("Not %s '%s': it does NOT use volume %s/%s" % (action, self.dc_name, PERSIST, self.dc_name))
-
-            return
-
         if self.is_special:
             if not auto:
                 logging.info("Not %s '%s': special container" % (action, self.dc_name))
+
+            return
+
+        if not self.vanilla_backup:
+            if not auto:
+                logging.info("Not %s '%s': it does NOT use volume %s/%s" % (action, self.dc_name, PERSIST, self.dc_name))
 
             return
 

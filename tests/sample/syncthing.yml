@@ -15,3 +15,4 @@ services:
     restart: unless-stopped
     volumes:
       - /srv/persist/syncthing:/config    # Shouldn't be auto-backed up, even if config looks like it should be
+      - /srv/data:/data
