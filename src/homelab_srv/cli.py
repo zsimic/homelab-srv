@@ -218,6 +218,31 @@ def update(domain):
 
 
 @main.command()
+def ps():
+    """Show running docker services"""
+    if GSRV.is_executor:
+        table = PrettyTable(["Service", "Running"], border="reddit")
+        dc_names = GSRV.bcfg.run.dc_names_for_host(GSRV.hostname) or []
+        for dc_name in sorted(dc_names):
+            dc = GSRV.bcfg.dc_files.get(dc_name)
+            if dc:
+                status = dc.is_running
+                if status:
+                    status = runez.bold(status)
+
+                else:
+                    status = runez.dim("not running")
+
+                table.add_row(dc.dc_name, status)
+
+        print(table)
+        return
+
+    for hostname in GSRV.bcfg.run.hostnames:
+        runez.run("ssh", hostname, C.SCRIPT_NAME, "ps", logger=logging.info)
+
+
+@main.command()
 @click.argument("hosts", required=False)
 def push(hosts):
     """Push srv setup to remote hosts"""

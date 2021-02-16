@@ -38,7 +38,13 @@ class C:
     @runez.cached_property
     def hostname(self):
         cmd = "/bin/hostname"
-        return runez.run(cmd, dryrun=False).output if os.path.exists(cmd) else os.environ.get("COMPUTERNAME") or ""
+        return runez.run(cmd, dryrun=False, logger=None).output if os.path.exists(cmd) else os.environ.get("COMPUTERNAME") or ""
+
+    @runez.cached_property
+    def running_docker_images(self):
+        r = run_docker("ps")
+        info = runez.parsed_tabular(r.output.strip().replace("CONTAINER ID", "CONTAINER_ID"))
+        return {x["IMAGE"]: x["STATUS"] for x in info}
 
     @runez.cached_property
     def is_executor(self):
@@ -64,6 +70,11 @@ def read_yml(path: Path, default=None):
             return yaml.load(fh, Loader=yaml.BaseLoader)
 
     return default
+
+
+def run_docker(*args, logger=logging.info):
+    assert GSRV.is_executor
+    return runez.run("docker", *args, logger=logger)
 
 
 def slash_trail(path, trail=False):
@@ -283,8 +294,14 @@ class SYDC(DCItem):
             yield from s.sanity_check()
 
     def run_docker_compose(self, *args):
-        with runez.CurrentFolder(self.dc_path.parent):
-            runez.run("docker-compose", "-f", self.dc_path, *args, stdout=None, stderr=None)
+        runez.run("docker-compose", "-f", self.dc_path, *args, stdout=None, stderr=None, logger=logging.info)
+
+    @property
+    def is_running(self):
+        for image in self.images:
+            status = GSRV.running_docker_images.get(image)
+            if status:
+                return status
 
     @runez.cached_property
     def images(self):
@@ -337,7 +354,7 @@ class SYDC(DCItem):
         """Using docker pull, apparently no way to see if docker-compose pull got a new image or not..."""
         updated = 0
         for image in self.images:
-            r = runez.run("docker", "pull", image)
+            r = run_docker("pull", image)
             if runez.DRYRUN or "newer image" in r.full_output:
                 updated += 1
 
@@ -368,7 +385,7 @@ class SYDC(DCItem):
 
         self.run_docker_compose("down")
         self.backup()
-        runez.run("docker", "image", "prune", "-f")
+        run_docker("image", "prune", "-f")
         self.run_docker_compose("up", "-d")
 
 
