@@ -39,6 +39,10 @@ def test_sample():
     assert len(cfg.get_dcs("all")) == 4
     assert len(cfg.get_dcs("special")) == 1
     assert len(cfg.get_dcs("vanilla")) == 2
+
+    pihole = cfg.dc_files.get("pihole")
+    assert pihole.images == ["pihole/pihole:latest"]
+
     with pytest.raises(BaseException):
         cfg.get_hosts("foo")
 

@@ -67,7 +67,7 @@ def read_yml(path: Path, default=None):
 
 
 def slash_trail(path, trail=False):
-    path = path.rstrip("/")
+    path = str(path).rstrip("/")
     return "%s/" % path if trail else path
 
 
@@ -82,16 +82,10 @@ def run_rsync(src, dest, sudo=False, env=None):
     if env and "PUID" in env and "PGID" in env:
         cmd.append("--chown=%s:%s" % (env["PUID"], env["PGID"]))
 
-    if isinstance(src, Path):
-        src = src.as_posix()
-
-    if isinstance(dest, Path):
-        dest = dest.as_posix()
-
     need_trail = os.path.isdir(src)
     src = slash_trail(src, trail=need_trail)
     dest = slash_trail(dest, trail=need_trail)
-    runez.run(*cmd, src, dest)
+    runez.run(*cmd, src, dest, logger=logging.info)
 
 
 class DCItem:
@@ -289,8 +283,12 @@ class SYDC(DCItem):
             yield from s.sanity_check()
 
     def run_docker_compose(self, *args):
-        with runez.CurrentFolder(self.dc_path.parent.as_posix()):
+        with runez.CurrentFolder(self.dc_path.parent):
             runez.run("docker-compose", "-f", self.dc_path, *args, stdout=None, stderr=None)
+
+    @runez.cached_property
+    def images(self):
+        return [s.image for s in self.services.values()]
 
     @runez.cached_property
     def vanilla_backup(self):
@@ -332,28 +330,46 @@ class SYDC(DCItem):
                     src, dest = dest, src
 
                 if not auto or not dest.exists():
-                    runez.ensure_folder(dest.as_posix())
+                    runez.ensure_folder(dest)
                     run_rsync(src, dest, sudo=True, env=env)
+
+    def pull_images(self):
+        """Using docker pull, apparently no way to see if docker-compose pull got a new image or not..."""
+        updated = 0
+        for image in self.images:
+            r = runez.run("docker", "pull", image)
+            if runez.DRYRUN or "newer image" in r.full_output:
+                updated += 1
+
+        return updated
 
     def restore(self, auto=False):
         self.backup(invert=True, auto=auto)
 
+    def restart(self):
+        assert GSRV.is_executor
+        self.run_docker_compose("restart")
+
     def start(self):
         assert GSRV.is_executor
-        self.run_docker_compose("up", "-d")
+        self.run_docker_compose("start")
 
     def stop(self):
         assert GSRV.is_executor
         self.run_docker_compose("stop")
         self.backup()
 
-    def upgrade(self):
+    def upgrade(self, force=False):
         assert GSRV.is_executor
+        updated = self.pull_images()
+        if not force and not updated:  # pragma: no cover
+            print("No new docker image available for %s" % self.dc_name)
+            return
+
         self.run_docker_compose("down")
         self.backup()
-        self.run_docker_compose("pull")
-        self.run_docker_compose("prune", "-f")
-        self.start()
+        runez.run("docker", "image", "prune", "-f")
+        self.run_docker_compose("up", "-d")
 
 
 def find_base_folder() -> (Path, str):
@@ -452,6 +468,10 @@ class SrvFolder:
                 if name not in self.dc_files:
                     yield self, "DC definition '%s' does not exist (referred from %s)" % (name, origin)
 
+    @runez.cached_property
+    def conflicting_ports(self):
+        return {k: v for k, v in self.used_host_ports().items() if len(v) > 1}
+
     def used_host_ports(self, by_port=True):
         result = defaultdict(set)
         for dc in self.dc_files.values():
@@ -482,10 +502,8 @@ class SrvFolder:
         for dc in self.dc_files.values():
             yield from dc.sanity_check()
 
-        ports = self.used_host_ports()
-        for port, dc_names in ports.items():
-            if len(dc_names) > 1:
-                yield self, "Port %s would conflict on same host for dcs: %s" % (port, " ".join(dc_names))
+        for port, dc_names in self.conflicting_ports.items():
+            yield self, "Port %s would conflict on same host for dcs: %s" % (port, " ".join(dc_names))
 
         yield from self.run.sanity_check()
         yield from self.backup.sanity_check()

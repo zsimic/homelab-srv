@@ -34,28 +34,44 @@ def test_runs(cli):
 
         cli.expect_failure("--dryrun -se:rps meta set-folder foo", "can only be ran from orchestrator")
 
-        cli.expect_success("meta ports", "443 ... pihole unifi-controller")
-        cli.expect_success("meta ports -s", "syncthing ... 8384 21027 22000")
-
         cli.expect_success("-se:rps meta status", "executor")
         assert "syncthing" not in cli.logged
 
         cli.expect_success("-se:rps meta status all", "executor")
         assert "syncthing" in cli.logged
 
-        cli.expect_success("-so:rps meta status", "orchestrator")
+        cli.expect_success("-so:rps meta status --ports", "orchestrator")
 
         cli.expect_failure("-se:rph stop rps:home-assistant", "Target host on executor must be self")
         cli.expect_success("-se:rph stop home-assistant", "not configured to run")
 
+        cli.run("-so: upgrade home-assistant")
+        assert cli.succeeded
+        assert "ssh rps homelab-srv" in cli.logged.stdout
+        assert "rph" not in cli.logged.stdout
+
+        cli.run("-so: upgrade home-assistant --force")
+        assert cli.succeeded
+        assert "ssh rps homelab-srv upgrade home-assistant --force" in cli.logged.stdout
+
         cli.expect_success("-se:rps stop syncthing", "docker-compose... stop")
-        cli.expect_success("-se:rps start syncthing", "docker-compose... up -d")
+        cli.expect_success("-se:rps start syncthing", "docker-compose... start")
+        cli.expect_success("-se:rps restart syncthing", "docker-compose... restart")
         cli.expect_success("-se:rps upgrade syncthing", "docker-compose... up -d")
 
         cli.expect_success("-so:rps backup", "ssh rps homelab-srv backup")
         cli.expect_success("-se:rps backup", "chown=1001")
-        cli.expect_success("-se:rph backup pihole", "persist/pihole .../server-backup/rph/pihole", "Port 443 would conflict")
-        cli.expect_success("-se:rps restore", "Would run", "Not restoring")
         cli.expect_success("-se:rps backup syncthing", "Not backing up 'syncthing': special container")
+
+        cli.run("-se:rph backup pihole")
+        assert cli.succeeded
+        assert cli.match("rsync .+ --delete --chown=1001:1001 .srv.persist.pihole .srv.data.server-backup.rph.pihole", regex=True)
+        assert cli.match("Port 443 would conflict")
+
+        cli.run("-se:rph restore pihole")
+        assert cli.succeeded
+        assert cli.match("rsync .+ --delete .srv.data.server-backup.rph.pihole .srv.persist.pihole", regex=True)
+
+        cli.expect_success("-se:rps restore", "Would run", "Not restoring")
 
         cli.expect_success("--dryrun -so: push", "Would run:...rsync")

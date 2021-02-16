@@ -18,6 +18,16 @@ from runez.render import PrettyTable
 from homelab_srv import __version__, C, GSRV, run_rsync
 
 
+def colored_port(port):
+    if port in GSRV.bcfg.conflicting_ports:
+        return runez.red(port)
+
+    if port < 1000:
+        return runez.blue(port)
+
+    return str(port)
+
+
 class CliTarget:
 
     def __call__(self, ctx, _param, value):
@@ -37,7 +47,7 @@ class CliTarget:
         self.hosts = GSRV.bcfg.get_hosts(self.hosts)
         return self
 
-    def run(self):
+    def run(self, *args, **kwargs):
         if GSRV.is_executor:
             should_run = GSRV.bcfg.run.dc_names_for_host(GSRV.hostname) or []
             for dc in self.dcs:
@@ -46,11 +56,24 @@ class CliTarget:
 
                 else:
                     f = getattr(dc, self.command)
-                    f()
+                    f(*args, **kwargs)
 
-        else:
-            for hostname in self.hosts:
-                runez.run("ssh", hostname, C.SCRIPT_NAME, self.command, self.given)
+            return
+
+        args = list(args)
+        for k, v in kwargs.items():
+            if v is not None:
+                if isinstance(v, bool):
+                    if v:
+                        args.append("--%s" % k)
+
+                else:  # pragma: no cover
+                    args.append("--%s=%s" % (k, v))
+
+        for hostname in self.hosts:
+            should_run = GSRV.bcfg.run.dc_names_for_host(hostname) or []
+            if any(dc.dc_name in should_run for dc in self.dcs):
+                runez.run("ssh", hostname, C.SCRIPT_NAME, self.command, self.given, *args)
 
 
 def target_option():
@@ -112,23 +135,6 @@ def mkpass(pwd):
 
 
 @meta.command()
-@click.option("--by-service", "-s", is_flag=True, help="Show ports used by service")
-def ports(by_service):
-    """Show ports used on host by all docker-compose files combined"""
-    table = PrettyTable(2, border="colon")
-    ports = GSRV.bcfg.used_host_ports(by_port=not by_service)
-    for port, dc_names in sorted(ports.items()):
-        dc_names = sorted(dc_names)
-        names = runez.joined(dc_names)
-        if not by_service and len(dc_names) > 1:
-            names = runez.red(names)
-
-        table.add_row(port, names)
-
-    print(table)
-
-
-@meta.command()
 @click.argument("folder", required=False)
 def set_folder(folder):
     """Configure where your _config.yml is"""
@@ -155,8 +161,9 @@ def set_folder(folder):
 
 
 @meta.command()
+@click.option("--ports", "-p", is_flag=True, help="Show used ports across all docker-compose files")
 @target_option()
-def status(target: CliTarget):
+def status(ports, target: CliTarget):
     """Show current status"""
     table = PrettyTable(2, border="colon")
     table.header[1].style = "bold"
@@ -174,8 +181,29 @@ def status(target: CliTarget):
     if GSRV.is_orchestrator:
         table.add_row("Hosts", runez.joined(target.hosts))
 
-    table.add_row("DCs", runez.joined(target.dcs))
+    table.add_row("Selected", runez.joined(target.dcs))
     print(table)
+
+    if ports:
+        print("")
+        table = PrettyTable(["Port", "Service(s)"], border="reddit")
+        table.header.style = "bold"
+        for port, names in sorted(GSRV.bcfg.used_host_ports(by_port=True).items()):
+            names = runez.joined(sorted(names))
+            if port in GSRV.bcfg.conflicting_ports:
+                names = runez.red(names)
+
+            table.add_row(colored_port(port), names)
+
+        print(table)
+        print("")
+
+        table = PrettyTable(["Service", "Port(s)"], border="reddit")
+        table.header.style = "bold"
+        for name, values in sorted(GSRV.bcfg.used_host_ports(by_port=False).items()):
+            table.add_row(name, runez.joined(colored_port(p) for p in sorted(values)))
+
+        print(table)
 
 
 @main.group()
@@ -204,6 +232,13 @@ def push(hosts):
 
 @main.command()
 @target_option()
+def restart(target):
+    """Restart target(s)"""
+    target.run()
+
+
+@main.command()
+@target_option()
 def start(target):
     """Start target(s)"""
     target.run()
@@ -217,10 +252,11 @@ def stop(target):
 
 
 @main.command()
+@click.option("--force", "-f", is_flag=True, help="Force upgrade, even if no new image available")
 @target_option()
-def upgrade(target):
+def upgrade(force, target: CliTarget):
     """Upgrade target(s)"""
-    target.run()
+    target.run(force=force)
 
 
 @main.command()
