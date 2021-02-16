@@ -226,20 +226,15 @@ def ps():
         for dc_name in sorted(dc_names):
             dc = GSRV.bcfg.dc_files.get(dc_name)
             if dc:
-                status = dc.is_running
-                if status:
-                    status = runez.bold(status)
-
-                else:
-                    status = runez.dim("not running")
-
-                table.add_row(dc.dc_name, status)
+                text = dc.is_running
+                text = runez.bold(text) if text else runez.dim("not running")
+                table.add_row(dc.dc_name, text)
 
         print(table)
         return
 
     for hostname in GSRV.bcfg.run.hostnames:
-        runez.run("ssh", hostname, C.SCRIPT_NAME, "ps", logger=logging.info)
+        runez.run("ssh", hostname, C.SCRIPT_NAME, "--color", "ps", logger=logging.info, stdout=None, stderr=None)
 
 
 @main.command()

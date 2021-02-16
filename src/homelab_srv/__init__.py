@@ -42,7 +42,7 @@ class C:
 
     @runez.cached_property
     def running_docker_images(self):
-        r = run_docker("ps")
+        r = run_docker("ps", logger=None)
         info = runez.parsed_tabular(r.output.strip().replace("CONTAINER ID", "CONTAINER_ID"))
         return {x["IMAGE"]: x["STATUS"] for x in info}
 
