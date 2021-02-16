@@ -221,14 +221,19 @@ def update(domain):
 def ps():
     """Show running docker services"""
     if GSRV.is_executor:
-        table = PrettyTable([runez.blue(GSRV.hostname), "Running"], border="dots")
+        table = PrettyTable([runez.blue(GSRV.hostname), "Running", "Created"], border="dots")
         dc_names = GSRV.bcfg.run.dc_names_for_host(GSRV.hostname) or []
         for dc_name in sorted(dc_names):
             dc = GSRV.bcfg.dc_files.get(dc_name)
             if dc:
-                text = dc.is_running
-                text = runez.bold(text) if text else runez.dim("not running")
-                table.add_row(dc.dc_name, text)
+                info = dc.is_running
+                running = runez.dim("not running")
+                created = ""
+                if info:
+                    running = runez.bold(info["STATUS"])
+                    created = runez.dim(info["CREATED"])
+
+                table.add_row(dc.dc_name, running, created)
 
         print(table)
         return
@@ -265,10 +270,11 @@ def start(target):
 
 
 @main.command()
+@click.option("--down", "-d", is_flag=True, help="Use 'docker-compose down' instead of simple stop")
 @target_option()
-def stop(target):
+def stop(down, target):
     """Stop target(s)"""
-    target.run()
+    target.run(down=down)
 
 
 @main.command()

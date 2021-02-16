@@ -44,7 +44,7 @@ class C:
     def running_docker_images(self):
         r = run_docker("ps", logger=None)
         info = runez.parsed_tabular(r.output.strip().replace("CONTAINER ID", "CONTAINER_ID"))
-        return {x["IMAGE"]: x["STATUS"] for x in info}
+        return {x["IMAGE"]: x for x in info}
 
     @runez.cached_property
     def is_executor(self):
@@ -294,7 +294,11 @@ class SYDC(DCItem):
             yield from s.sanity_check()
 
     def run_docker_compose(self, *args):
-        runez.run("docker-compose", "-f", self.dc_path, *args, stdout=None, stderr=None, logger=logging.info)
+        runez.run(
+            "docker-compose", "-p", self.dc_name, "-f", self.dc_path, *args,
+            stdout=None, stderr=None,
+            logger=logging.info,
+        )
 
     @property
     def is_running(self):
@@ -371,15 +375,15 @@ class SYDC(DCItem):
         assert GSRV.is_executor
         self.run_docker_compose("start")
 
-    def stop(self):
+    def stop(self, down=False):
         assert GSRV.is_executor
-        self.run_docker_compose("stop")
+        self.run_docker_compose("down" if down else "stop")
         self.backup()
 
     def upgrade(self, force=False):
         assert GSRV.is_executor
         updated = self.pull_images()
-        if not force and not updated:  # pragma: no cover
+        if not force and not updated and self.is_running:  # pragma: no cover
             print("No new docker image available for %s" % self.dc_name)
             return
 
