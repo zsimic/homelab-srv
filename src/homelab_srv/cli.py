@@ -221,7 +221,7 @@ def update(domain):
 def ps():
     """Show running docker services"""
     if GSRV.is_executor:
-        table = PrettyTable(["Service", "Running"], border="reddit")
+        table = PrettyTable([runez.blue(GSRV.hostname), "Running"], border="dots")
         dc_names = GSRV.bcfg.run.dc_names_for_host(GSRV.hostname) or []
         for dc_name in sorted(dc_names):
             dc = GSRV.bcfg.dc_files.get(dc_name)
