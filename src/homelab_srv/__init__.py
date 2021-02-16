@@ -60,6 +60,40 @@ class C:
         if not self.is_orchestrator:
             runez.abort("This command can only be ran from orchestrator machine")
 
+    @staticmethod
+    def run_docker(*args):
+        assert GSRV.is_executor
+        return runez.run("docker", *args, stdout=None, stderr=None)
+
+    @staticmethod
+    def run_ssh(hostname, *args):
+        GSRV.require_orchestrator()
+        if hostname not in GSRV.bcfg.run.hostnames:
+            runez.abort("Host '%s' is not defined in config %s" % (hostname, runez.short(GSRV.bcfg.cfg_yml)))
+
+        C.run_uncaptured("ssh", hostname, *args)
+
+    @staticmethod
+    def run_rsync(src, dest, sudo=False, env=None):
+        cmd = []
+        if sudo:
+            cmd.append("sudo")
+
+        cmd.append("rsync")
+        cmd.append("-rlptJ")
+        cmd.append("--delete")
+        if env and "PUID" in env and "PGID" in env:
+            cmd.append("--chown=%s:%s" % (env["PUID"], env["PGID"]))
+
+        need_trail = os.path.isdir(src)
+        src = slash_trail(src, trail=need_trail)
+        dest = slash_trail(dest, trail=need_trail)
+        C.run_uncaptured(*cmd, src, dest)
+
+    @staticmethod
+    def run_uncaptured(program, *args):
+        runez.run(program, *args, stdout=None, stderr=None)
+
 
 GSRV = C()
 
@@ -72,31 +106,9 @@ def read_yml(path: Path, default=None):
     return default
 
 
-def run_docker(*args):
-    assert GSRV.is_executor
-    return runez.run("docker", *args)
-
-
 def slash_trail(path, trail=False):
     path = str(path).rstrip("/")
     return "%s/" % path if trail else path
-
-
-def run_rsync(src, dest, sudo=False, env=None):
-    cmd = []
-    if sudo:
-        cmd.append("sudo")
-
-    cmd.append("rsync")
-    cmd.append("-rlptJ")
-    cmd.append("--delete")
-    if env and "PUID" in env and "PGID" in env:
-        cmd.append("--chown=%s:%s" % (env["PUID"], env["PGID"]))
-
-    need_trail = os.path.isdir(src)
-    src = slash_trail(src, trail=need_trail)
-    dest = slash_trail(dest, trail=need_trail)
-    runez.run(*cmd, src, dest)
 
 
 class DCItem:
@@ -294,7 +306,7 @@ class SYDC(DCItem):
             yield from s.sanity_check()
 
     def run_docker_compose(self, *args):
-        runez.run("docker-compose", "-p", self.dc_name, "-f", self.dc_path, *args, stdout=None, stderr=None)
+        C.run_uncaptured("docker-compose", "-p", self.dc_name, "-f", self.dc_path, *args)
 
     @property
     def is_running(self):
@@ -348,13 +360,13 @@ class SYDC(DCItem):
 
                 if not auto or not dest.exists():
                     runez.ensure_folder(dest)
-                    run_rsync(src, dest, sudo=True, env=env)
+                    C.run_rsync(src, dest, sudo=True, env=env)
 
     def pull_images(self):
         """Using docker pull, apparently no way to see if docker-compose pull got a new image or not..."""
         updated = 0
         for image in self.images:
-            r = run_docker("pull", image)
+            r = runez.run("docker", "pull", image)
             if runez.DRYRUN or "newer image" in r.full_output:
                 updated += 1
 
@@ -385,7 +397,7 @@ class SYDC(DCItem):
 
         self.run_docker_compose("down")
         self.backup()
-        run_docker("image", "prune", "-f")
+        C.run_docker("image", "prune", "-f")
         self.run_docker_compose("up", "-d")
 
 

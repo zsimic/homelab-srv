@@ -15,7 +15,7 @@ import click
 import runez
 from runez.render import PrettyTable
 
-from homelab_srv import __version__, C, GSRV, run_rsync
+from homelab_srv import __version__, C, GSRV
 
 
 def colored_port(port):
@@ -73,7 +73,7 @@ class CliTarget:
         for hostname in self.hosts:
             should_run = GSRV.bcfg.run.dc_names_for_host(hostname) or []
             if any(dc.dc_name in should_run for dc in self.dcs):
-                runez.run("ssh", hostname, C.SCRIPT_NAME, self.command, self.given, *args)
+                C.run_ssh(hostname, C.SCRIPT_NAME, self.command, self.given, *args)
 
 
 def target_option():
@@ -220,7 +220,12 @@ def ssh(key, address):
     if not key.exists():
         runez.abort("Key '%s' does not exist" % key)
 
-    r = runez.run("ssh", "-n", "-o", "PreferredAuthentications=publickey", address, "echo", "hi", fatal=False)
+    test_args = ["-n", "-o", "PreferredAuthentications=publickey", address, "echo", "hi"]
+    r = runez.run("ssh", *test_args, fatal=False)
+    if r.failed and "IDENTIFICATION HAS CHANGED" in r.error:
+        C.run_uncaptured("ssh-keygen", "-R", address.rpartition("@")[2])
+        r = runez.run("ssh", *test_args, fatal=False)
+
     if r.succeeded:
         print("ssh %s %s" % (address, runez.green("already works")))
         return
@@ -229,20 +234,15 @@ def ssh(key, address):
         runez.abort("%s doesn't seem reachable:\n%s" % (address, r.full_output))
 
     print(runez.orange("\nSeeding ssh id...\n"))
-    runez.run("ssh-copy-id", "-i", key, address, stdout=None, stderr=None)
+    C.run_uncaptured("ssh-copy-id", "-i", key, address)
 
 
 @seed.command()
 @click.argument("hostname")
 def setup(hostname):
     """Seed homelab-srv itself on remote host"""
-    GSRV.require_orchestrator()
-    if not hostname in GSRV.bcfg.run.hostnames:
-        runez.abort("Host '%s' is not defined in config %s" % (hostname, runez.short(GSRV.bcfg.cfg_yml)))
-
-    pickley = "/usr/local/bin/pickley"
-    url = "https://github.com/zsimic/homelab-srv.git"
-    runez.run("ssh", hostname, pickley, "install", url, fatal=False)
+    C.run_ssh(hostname, "/usr/local/bin/pickley", "install", "https://github.com/zsimic/homelab-srv.git")
+    push_srv_to_host(hostname)
 
 
 @main.group()
@@ -278,20 +278,24 @@ def ps():
         return
 
     for hostname in GSRV.bcfg.run.hostnames:
-        runez.run("ssh", hostname, C.SCRIPT_NAME, "--color", "ps", stdout=None, stderr=None)
+        C.run_ssh(hostname, C.SCRIPT_NAME, "--color", "ps")
+
+
+def push_srv_to_host(hostname):
+    GSRV.require_orchestrator()
+    C.run_rsync(GSRV.bcfg.folder, "%s:%s" % (hostname, C.SRV_RUN.as_posix()))
 
 
 @main.command()
 @click.argument("hosts", required=False)
 def push(hosts):
     """Push srv setup to remote hosts"""
-    GSRV.require_orchestrator()
     hosts = runez.flattened(hosts, keep_empty=None, split=",")
     if not hosts or hosts == "all":
         hosts = GSRV.bcfg.run.hostnames
 
     for hostname in hosts:
-        run_rsync(GSRV.bcfg.folder, "%s:%s" % (hostname, C.SRV_RUN.as_posix()))
+        push_srv_to_host(hostname)
 
 
 @main.command()
