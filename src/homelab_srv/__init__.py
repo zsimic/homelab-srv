@@ -42,7 +42,7 @@ class C:
 
     @runez.cached_property
     def running_docker_images(self):
-        r = run_docker("ps", logger=None)
+        r = runez.run("docker", "ps", logger=None)
         info = runez.parsed_tabular(r.output.strip().replace("CONTAINER ID", "CONTAINER_ID"))
         return {x["IMAGE"]: x for x in info}
 
@@ -72,9 +72,9 @@ def read_yml(path: Path, default=None):
     return default
 
 
-def run_docker(*args, logger=logging.info):
+def run_docker(*args):
     assert GSRV.is_executor
-    return runez.run("docker", *args, logger=logger)
+    return runez.run("docker", *args)
 
 
 def slash_trail(path, trail=False):
@@ -96,7 +96,7 @@ def run_rsync(src, dest, sudo=False, env=None):
     need_trail = os.path.isdir(src)
     src = slash_trail(src, trail=need_trail)
     dest = slash_trail(dest, trail=need_trail)
-    runez.run(*cmd, src, dest, logger=logging.info)
+    runez.run(*cmd, src, dest)
 
 
 class DCItem:
@@ -294,11 +294,7 @@ class SYDC(DCItem):
             yield from s.sanity_check()
 
     def run_docker_compose(self, *args):
-        runez.run(
-            "docker-compose", "-p", self.dc_name, "-f", self.dc_path, *args,
-            stdout=None, stderr=None,
-            logger=logging.info,
-        )
+        runez.run("docker-compose", "-p", self.dc_name, "-f", self.dc_path, *args, stdout=None, stderr=None)
 
     @property
     def is_running(self):

@@ -90,7 +90,7 @@ def target_option():
 def main(ctx, debug, simulate):
     """Manage dockerized servers"""
     runez.system.AbortException = SystemExit
-    runez.log.setup(debug=debug, level=logging.INFO)
+    runez.log.setup(debug=debug, level=logging.INFO, console_format="%(levelname)s %(message)s", default_logger=logging.info)
     if simulate:
         runez.log.set_dryrun(True)
         role, _, host = simulate.rpartition(":")
@@ -207,6 +207,45 @@ def status(ports, target: CliTarget):
 
 
 @main.group()
+def seed():
+    """Seed remote host setup (ssh, homelab-srv etc)"""
+
+
+@seed.command()
+@click.option("--key", default="~/.ssh/id_rsa.pub", help="Public key to seed target with")
+@click.argument("address")
+def ssh(key, address):
+    """Seed remote user@host with given ssh public key"""
+    key = Path(key).expanduser()
+    if not key.exists():
+        runez.abort("Key '%s' does not exist" % key)
+
+    r = runez.run("ssh", "-n", "-o", "PreferredAuthentications=publickey", address, "echo", "hi", fatal=False)
+    if r.succeeded:
+        print("ssh %s %s" % (address, runez.green("already works")))
+        return
+
+    if "denied" not in r.error:
+        runez.abort("%s doesn't seem reachable:\n%s" % (address, r.full_output))
+
+    print(runez.orange("\nSeeding ssh id...\n"))
+    runez.run("ssh-copy-id", "-i", key, address, stdout=None, stderr=None)
+
+
+@seed.command()
+@click.argument("hostname")
+def setup(hostname):
+    """Seed homelab-srv itself on remote host"""
+    GSRV.require_orchestrator()
+    if not hostname in GSRV.bcfg.run.hostnames:
+        runez.abort("Host '%s' is not defined in config %s" % (hostname, runez.short(GSRV.bcfg.cfg_yml)))
+
+    pickley = "/usr/local/bin/pickley"
+    url = "https://github.com/zsimic/homelab-srv.git"
+    runez.run("ssh", hostname, pickley, "install", url, fatal=False)
+
+
+@main.group()
 def cert():
     """Manage certs"""
 
@@ -239,7 +278,7 @@ def ps():
         return
 
     for hostname in GSRV.bcfg.run.hostnames:
-        runez.run("ssh", hostname, C.SCRIPT_NAME, "--color", "ps", logger=logging.info, stdout=None, stderr=None)
+        runez.run("ssh", hostname, C.SCRIPT_NAME, "--color", "ps", stdout=None, stderr=None)
 
 
 @main.command()
