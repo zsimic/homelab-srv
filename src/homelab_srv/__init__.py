@@ -92,7 +92,7 @@ class C:
 
     @staticmethod
     def run_uncaptured(program, *args):
-        runez.run(program, *args, stdout=None, stderr=None)
+        runez.run(program, *args, stdout=None, stderr=None, logger=logging.info)
 
 
 GSRV = C()
@@ -359,7 +359,7 @@ class SYDC(DCItem):
                     src, dest = dest, src
 
                 if not auto or not dest.exists():
-                    runez.ensure_folder(dest)
+                    runez.ensure_folder(dest, logger=logging.info)
                     C.run_rsync(src, dest, sudo=True, env=env)
 
     def pull_images(self):
