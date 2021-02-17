@@ -86,6 +86,12 @@ class C:
             cmd.append("--chown=%s:%s" % (env["PUID"], env["PGID"]))
 
         need_trail = os.path.isdir(src)
+        if need_trail:
+            runez.ensure_folder(dest, logger=logging.info)
+
+        else:
+            runez.ensure_folder(os.path.dirname(dest), logger=logging.info)
+
         src = slash_trail(src, trail=need_trail)
         dest = slash_trail(dest, trail=need_trail)
         C.run_uncaptured(*cmd, src, dest)
@@ -348,18 +354,19 @@ class SYDC(DCItem):
         if not configured:
             configured = [""]
 
+        logging.debug("%s %s, configured: %s" % (action, self.dc_name, configured))
         backup_dest = self.parent.backup.backup_destination(self)
         env = self.dc_config.env
         for rel_path in configured:
             src = C.PERSIST / self.dc_name / rel_path
-            if runez.DRYRUN or src.is_dir():
-                dest = backup_dest / rel_path
-                if invert:
-                    env = None
-                    src, dest = dest, src
+            dest = backup_dest / rel_path
+            if invert:
+                env = None
+                src, dest = dest, src
 
+            logging.debug("%s source: %s [exists: %s], dest: %s" % (action, src, src.exists(), dest))
+            if runez.DRYRUN or src.exists():
                 if not auto or not dest.exists():
-                    runez.ensure_folder(dest, logger=logging.info)
                     C.run_rsync(src, dest, sudo=True, env=env)
 
     def pull_images(self):
