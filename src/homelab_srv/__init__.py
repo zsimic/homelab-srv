@@ -86,11 +86,12 @@ class C:
             cmd.append("--chown=%s:%s" % (env["PUID"], env["PGID"]))
 
         need_trail = os.path.isdir(src)
-        if need_trail:
-            runez.ensure_folder(dest, logger=logging.info)
+        if ":" not in str(dest):
+            if need_trail:
+                runez.ensure_folder(dest, logger=logging.info)
 
-        else:
-            runez.ensure_folder(os.path.dirname(dest), logger=logging.info)
+            else:
+                runez.ensure_folder(os.path.dirname(dest), logger=logging.info)
 
         src = slash_trail(src, trail=need_trail)
         dest = slash_trail(dest, trail=need_trail)
@@ -98,7 +99,7 @@ class C:
 
     @staticmethod
     def run_uncaptured(program, *args):
-        runez.run(program, *args, stdout=None, stderr=None, logger=logging.info)
+        runez.run(str(program), *args, stdout=None, stderr=None, logger=logging.info)
 
 
 GSRV = C()

@@ -114,6 +114,16 @@ def main(ctx, debug, simulate):
             runez.abort("Please fix reported issues first")
 
 
+@main.command()
+@click.argument("domain", required=False)
+def certbot(domain):
+    """Auto-update certbot SSL certs"""
+    from homelab_srv.cert import CertbotRunner
+
+    m = CertbotRunner()
+    m.update_certs(domain)
+
+
 @main.group()
 def meta():
     """Meta/utility subcommands"""
@@ -241,19 +251,9 @@ def ssh(key, address):
 @click.argument("hostname")
 def setup(hostname):
     """Seed homelab-srv itself on remote host"""
+    C.run_ssh(hostname, "/usr/local/bin/pickley", "install", "virtualenv")
     C.run_ssh(hostname, "/usr/local/bin/pickley", "install", "https://github.com/zsimic/homelab-srv.git")
     push_srv_to_host(hostname)
-
-
-@main.group()
-def cert():
-    """Manage certs"""
-
-
-@cert.command()
-@click.argument("domain")
-def update(domain):
-    """Update certs for a domain"""
 
 
 @main.command()

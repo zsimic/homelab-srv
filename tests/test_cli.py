@@ -47,12 +47,12 @@ def test_runs(cli):
 
         cli.run("-so: upgrade home-assistant")
         assert cli.succeeded
-        assert "ssh rps homelab-srv" in cli.logged.stdout
-        assert "rph" not in cli.logged.stdout
+        assert "ssh rps homelab-srv" in cli.logged
+        assert "rph" not in cli.logged
 
         cli.run("-so: upgrade home-assistant --force")
         assert cli.succeeded
-        assert "ssh rps homelab-srv upgrade home-assistant --force" in cli.logged.stdout
+        assert "ssh rps homelab-srv upgrade home-assistant --force" in cli.logged
 
         cli.expect_success("-se:rps stop syncthing", "docker-compose... stop")
         cli.expect_success("-se:rps start syncthing", "docker-compose... start")

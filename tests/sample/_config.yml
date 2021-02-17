@@ -19,3 +19,14 @@ env:
   PGID: 1001
   PUID: 1001
   TZ: America/Los_Angeles
+
+certbot:
+  host: rps
+  addon: linode
+  creds: ~/.ssh/linode.ini
+  domains:
+  - example.com
+  - example.org
+  publish:
+  - /srv/persist/nginx/conf.d
+  - ca1:/srv/persist/nginx/conf.d
