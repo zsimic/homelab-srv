@@ -22,8 +22,7 @@ env:
 
 certbot:
   host: rps
-  addon: linode
-  creds: ~/.ssh/linode.ini
+  provider: linode@~/.ssh/linode.ini
   domains:
   - example.com
   - example.org

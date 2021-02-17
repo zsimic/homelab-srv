@@ -86,8 +86,15 @@ class CertbotRunner:
             runez.abort("There is no 'certbot' section in %s" % C.CONFIG_YML)
 
         self.host = self.get_value("host")
-        self.addon = self.get_value("addon")
-        self.creds = Path(self.get_value("creds")).expanduser()
+        provider = self.get_value("provider")
+        self.provider, _, self.creds = provider.partition("@")
+        if not self.creds:
+            runez.abort("No credentials file configured for provider '%s' in %s:certbot/provider" % (provider, C.CONFIG_YML))
+
+        self.creds = Path(self.creds).expanduser()
+        if not runez.DRYRUN and not self.creds.exists():
+            runez.abort("Credentials file '%s' does not exist in (configured in %s:certbot/provider)" % (self.creds, C.CONFIG_YML))
+
         self.email = self.get_value("email", required=False)
         self.domains = runez.flattened(self.get_value("domains"))
         self.publish = runez.flattened(self.get_value("publish"))
@@ -122,8 +129,8 @@ class CertbotRunner:
             "--agree-tos",
             "--max-log-backups=5",
             "--preferred-challenges=dns",
-            "--dns-%s" % self.addon,
-            "--dns-%s-credentials=%s" % (self.addon, self.creds),
+            "--dns-%s" % self.provider,
+            "--dns-%s-credentials=%s" % (self.provider, self.creds),
             *args,
         )
 
@@ -134,4 +141,4 @@ class CertbotRunner:
 
         runez.delete(self.venv)
         runez.run("virtualenv", self.venv)
-        C.run_uncaptured(self.venv_bin / "pip", "install", "certbot", "certbot-dns-%s" % self.addon)
+        C.run_uncaptured(self.venv_bin / "pip", "install", "certbot", "certbot-dns-%s" % self.provider)
