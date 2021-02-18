@@ -305,15 +305,6 @@ def ssh(key, address):
     run_uncaptured("ssh-copy-id", "-i", key, address)
 
 
-@seed.command()
-@click.argument("hostname")
-def setup(hostname):
-    """Seed homelab-srv itself on remote host"""
-    run_ssh(hostname, "/usr/local/bin/pickley", "install", "virtualenv")
-    run_ssh(hostname, "/usr/local/bin/pickley", "install", "https://github.com/zsimic/homelab-srv.git")
-    push_srv_to_host(hostname)
-
-
 @main.command()
 def ps():
     """Show running docker services"""
@@ -339,21 +330,24 @@ def ps():
         run_ssh(hostname, homelab_srv.SCRIPT_NAME, "--color", "ps")
 
 
-def push_srv_to_host(hostname):
+def push_srv_to_host(hostname, self_upgrade):
     GSRV.require_orchestrator()
     run_rsync(GSRV.bcfg.folder, "%s:%s" % (hostname, SRV_RUN.as_posix()))
+    if self_upgrade:
+        run_ssh(hostname, "/usr/local/bin/pickley", "install", "https://github.com/zsimic/homelab-srv.git")
 
 
 @main.command()
+@click.option("--self-upgrade", "-u", is_flag=True, help="Upgrade homelab-srv as well")
 @click.argument("hosts", required=False)
-def push(hosts):
+def push(self_upgrade, hosts):
     """Push srv setup to remote hosts"""
     hosts = runez.flattened(hosts, keep_empty=None, split=",")
     if not hosts or hosts == "all":
         hosts = GSRV.bcfg.run.hostnames
 
     for hostname in hosts:
-        push_srv_to_host(hostname)
+        push_srv_to_host(hostname, self_upgrade)
 
 
 @main.command()
