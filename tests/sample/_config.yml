@@ -22,10 +22,10 @@ env:
 
 certbot:
   host: rps
-  provider: linode@~/.ssh/linode.ini
+  provider: linode@~/.ssh/linode.cfg
   domains:
   - example.com
   - example.org
   publish:
   - /srv/persist/nginx/conf.d
-  - ca1:/srv/persist/nginx/conf.d
+  - some-remote-host:/srv/persist/nginx/conf.d

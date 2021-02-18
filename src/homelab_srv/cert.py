@@ -5,7 +5,7 @@ from pathlib import Path
 
 import runez
 
-from homelab_srv import C, GSRV
+from homelab_srv import CONFIG_YML, GSRV, PERSIST, run_rsync, run_uncaptured
 
 
 def file_age(path):
@@ -63,7 +63,7 @@ class CertbotDomain:
             runez.copy(self.source(fname), self.dest(fname))
 
         for target in self.runner.publish:
-            C.run_rsync(self.deployed, target)
+            run_rsync(self.deployed, target)
 
 
 class CertbotRunner:
@@ -77,23 +77,23 @@ class CertbotRunner:
         venv/
     """
     def __init__(self):
-        self.folder = C.PERSIST / "_ssl"
+        self.folder = PERSIST / "_ssl"
         self.deployed = self.folder / "deployed"
         self.venv = self.folder / "venv"
         self.venv_bin = self.venv / "bin"
         self.cfg = GSRV.bcfg.cfg.get("certbot")
         if not self.cfg:
-            runez.abort("There is no 'certbot' section in %s" % C.CONFIG_YML)
+            runez.abort("There is no 'certbot' section in %s" % CONFIG_YML)
 
         self.host = self.get_value("host")
         provider = self.get_value("provider")
         self.provider, _, self.creds = provider.partition("@")
         if not self.creds:
-            runez.abort("No credentials file configured for provider '%s' in %s:certbot/provider" % (provider, C.CONFIG_YML))
+            runez.abort("No credentials file configured for provider '%s' in %s:certbot/provider" % (provider, CONFIG_YML))
 
         self.creds = Path(self.creds).expanduser()
         if not runez.DRYRUN and not self.creds.exists():
-            runez.abort("Credentials file '%s' does not exist in (configured in %s:certbot/provider)" % (self.creds, C.CONFIG_YML))
+            runez.abort("Credentials file '%s' does not exist in (configured in %s:certbot/provider)" % (self.creds, CONFIG_YML))
 
         self.email = self.get_value("email", required=False)
         self.domains = runez.flattened(self.get_value("domains"))
@@ -105,7 +105,7 @@ class CertbotRunner:
     def get_value(self, key, required=True):
         v = self.cfg.get(key)
         if required and not v:
-            runez.abort("Missing key '%s' in %s:certbot" % (key, C.CONFIG_YML))
+            runez.abort("Missing key '%s' in %s:certbot" % (key, CONFIG_YML))
 
         return v
 
@@ -123,7 +123,7 @@ class CertbotRunner:
 
     def run_certbot(self, *args):
         self.auto_install_certbot()
-        C.run_uncaptured(
+        run_uncaptured(
             self.venv_bin / "certbot",
             "certonly",
             "--agree-tos",
@@ -141,4 +141,4 @@ class CertbotRunner:
 
         runez.delete(self.venv)
         runez.run("virtualenv", self.venv)
-        C.run_uncaptured(self.venv_bin / "pip", "install", "certbot", "certbot-dns-%s" % self.provider)
+        run_uncaptured(self.venv_bin / "pip", "install", "certbot", "certbot-dns-%s" % self.provider)

@@ -1,13 +1,7 @@
 import pytest
 import runez
 
-from homelab_srv import C, slash_trail, SrvFolder
-
-
-def test_global_state():
-    # Hostname can be replaced in --simulate run mode, make sure test coverage exercises the non-overridden case too
-    gs = C()
-    assert str(gs) == gs.hostname
+from homelab_srv import slash_trail, SrvFolder
 
 
 def test_sample():

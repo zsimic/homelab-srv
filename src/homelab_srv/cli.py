@@ -9,13 +9,15 @@ Example:
 """
 
 import logging
+import os
 from pathlib import Path
 
 import click
 import runez
 from runez.render import PrettyTable
 
-from homelab_srv import __version__, C, GSRV
+import homelab_srv
+from homelab_srv import CONFIG_PATH, CONFIG_YML, GSRV, run_rsync, run_ssh, run_uncaptured, SCRIPT_NAME, SRV_RUN, SrvFolder
 
 
 def colored_port(port):
@@ -73,32 +75,39 @@ class CliTarget:
         for hostname in self.hosts:
             should_run = GSRV.bcfg.run.dc_names_for_host(hostname) or []
             if any(dc.dc_name in should_run for dc in self.dcs):
-                C.run_ssh(hostname, C.SCRIPT_NAME, self.command, self.given, *args)
+                run_ssh(hostname, SCRIPT_NAME, self.command, self.given, *args)
 
 
 def target_option():
     return click.argument("target", callback=CliTarget(), required=False)
 
 
+def get_hostname():
+    cmd = "/bin/hostname"
+    return runez.run(cmd, dryrun=False, logger=None).output if os.path.exists(cmd) else os.environ.get("COMPUTERNAME") or ""
+
+
 @runez.click.group(epilog=__doc__)
 @click.pass_context
-@runez.click.version(prog_name=C.SCRIPT_NAME, version=__version__)
+@runez.click.version(prog_name=SCRIPT_NAME, version=homelab_srv.__version__)
 @runez.click.debug()
 @runez.click.dryrun("-n")
 @runez.click.color()
-@click.option("--simulate", "-s", help="Simulate a role:host, for troubleshooting/test runs")
+@click.option("--simulate", "-s", help="Simulate a hostname, for troubleshooting/test runs")
 def main(ctx, debug, simulate):
     """Manage dockerized servers"""
     runez.system.AbortException = SystemExit
     runez.log.setup(debug=debug, level=logging.INFO, console_format="%(levelname)s %(message)s", default_logger=logging.info)
+    GSRV.bcfg = SrvFolder()
+    GSRV.hostname = get_hostname()
+    GSRV.is_executor = not runez.log.current_test() and GSRV.bcfg.folder and GSRV.bcfg.folder is SRV_RUN
     if simulate:
         runez.log.set_dryrun(True)
-        role, _, host = simulate.rpartition(":")
-        if role:
-            GSRV.is_executor = role.startswith("e")
+        if simulate[0] == "!":
+            GSRV.is_executor = True
+            simulate = simulate[1:]
 
-        if host:
-            GSRV.hostname = host
+        GSRV.hostname = simulate
 
     if ctx.invoked_subcommand != "meta":
         fatal = 0
@@ -150,8 +159,8 @@ def set_folder(folder):
     """Configure where your _config.yml is"""
     GSRV.require_orchestrator()
     if not folder:
-        cfg_loc = runez.dim("(in %s)" % C.CONFIG_PATH)
-        if GSRV.bcfg.folder_origin == C.CONFIG_PATH:  # pragma: no cover
+        cfg_loc = runez.dim("(in %s)" % CONFIG_PATH)
+        if GSRV.bcfg.folder_origin == CONFIG_PATH:  # pragma: no cover
             print("Currently configured folder %s: %s" % (cfg_loc, runez.bold(runez.short(GSRV.bcfg.folder))))
 
         else:
@@ -163,11 +172,11 @@ def set_folder(folder):
     if not folder.is_dir():
         runez.abort("Folder '%s' does not exist" % folder)
 
-    cfg_yml = folder / C.CONFIG_YML
+    cfg_yml = folder / CONFIG_YML
     if not cfg_yml.exists():
         runez.abort("'%s' does not exist" % cfg_yml)
 
-    runez.write(C.CONFIG_PATH, "%s\n" % folder)
+    runez.write(CONFIG_PATH, "%s\n" % folder)
 
 
 @meta.command()
@@ -233,7 +242,7 @@ def ssh(key, address):
     test_args = ["-n", "-o", "PreferredAuthentications=publickey", address, "echo", "hi"]
     r = runez.run("ssh", *test_args, fatal=False)
     if r.failed and "IDENTIFICATION HAS CHANGED" in r.error:
-        C.run_uncaptured("ssh-keygen", "-R", address.rpartition("@")[2])
+        run_uncaptured("ssh-keygen", "-R", address.rpartition("@")[2])
         r = runez.run("ssh", *test_args, fatal=False)
 
     if r.succeeded:
@@ -244,15 +253,15 @@ def ssh(key, address):
         runez.abort("%s doesn't seem reachable:\n%s" % (address, r.full_output))
 
     print(runez.orange("\nSeeding ssh id...\n"))
-    C.run_uncaptured("ssh-copy-id", "-i", key, address)
+    run_uncaptured("ssh-copy-id", "-i", key, address)
 
 
 @seed.command()
 @click.argument("hostname")
 def setup(hostname):
     """Seed homelab-srv itself on remote host"""
-    C.run_ssh(hostname, "/usr/local/bin/pickley", "install", "virtualenv")
-    C.run_ssh(hostname, "/usr/local/bin/pickley", "install", "https://github.com/zsimic/homelab-srv.git")
+    run_ssh(hostname, "/usr/local/bin/pickley", "install", "virtualenv")
+    run_ssh(hostname, "/usr/local/bin/pickley", "install", "https://github.com/zsimic/homelab-srv.git")
     push_srv_to_host(hostname)
 
 
@@ -278,12 +287,12 @@ def ps():
         return
 
     for hostname in GSRV.bcfg.run.hostnames:
-        C.run_ssh(hostname, C.SCRIPT_NAME, "--color", "ps")
+        run_ssh(hostname, SCRIPT_NAME, "--color", "ps")
 
 
 def push_srv_to_host(hostname):
     GSRV.require_orchestrator()
-    C.run_rsync(GSRV.bcfg.folder, "%s:%s" % (hostname, C.SRV_RUN.as_posix()))
+    run_rsync(GSRV.bcfg.folder, "%s:%s" % (hostname, SRV_RUN.as_posix()))
 
 
 @main.command()

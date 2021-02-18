@@ -1,7 +1,5 @@
 import runez
 
-from homelab_srv import GSRV
-
 
 def test_sanity_check(cli):
     cli.expect_success("--version")
@@ -19,9 +17,6 @@ def test_runs(cli):
             "Please fix reported issues first",
         )
 
-    # Reset global state (applies to tests only...)
-    del GSRV.bcfg
-
     with runez.CurrentFolder(runez.log.tests_path("sample")):
         cli.expect_success("--dryrun meta set-folder", "No folder is currently configured")
 
@@ -32,46 +27,46 @@ def test_runs(cli):
         if not runez.WINDOWS:
             cli.expect_success("meta mkpass foo")
 
-        cli.expect_failure("--dryrun -se:rps meta set-folder foo", "can only be ran from orchestrator")
+        cli.expect_failure("--dryrun -s!rps meta set-folder foo", "can only be ran from orchestrator")
 
-        cli.expect_success("-se:rps meta status", "executor")
+        cli.expect_success("--dryrun -s!rps meta status", "executor")
         assert "syncthing" not in cli.logged
 
-        cli.expect_success("-se:rps meta status all", "executor")
+        cli.expect_success("--dryrun -s!rps meta status all", "executor")
         assert "syncthing" in cli.logged
 
-        cli.expect_success("-so:rps meta status --ports", "orchestrator")
+        cli.expect_success("meta status --ports", "orchestrator")
 
-        cli.expect_failure("-se:rph stop rps:home-assistant", "Target host on executor must be self")
-        cli.expect_success("-se:rph stop home-assistant", "not configured to run")
+        cli.expect_failure("--dryrun -s!rph stop rps:home-assistant", "Target host on executor must be self")
+        cli.expect_success("--dryrun -s!rph stop home-assistant", "not configured to run")
 
-        cli.run("-so: upgrade home-assistant")
+        cli.run("--dryrun upgrade home-assistant")
         assert cli.succeeded
         assert "ssh rps homelab-srv" in cli.logged
         assert "rph" not in cli.logged
 
-        cli.run("-so: upgrade home-assistant --force")
+        cli.run("--dryrun upgrade home-assistant --force")
         assert cli.succeeded
         assert "ssh rps homelab-srv upgrade home-assistant --force" in cli.logged
 
-        cli.expect_success("-se:rps stop syncthing", "docker-compose... stop")
-        cli.expect_success("-se:rps start syncthing", "docker-compose... start")
-        cli.expect_success("-se:rps restart syncthing", "docker-compose... restart")
-        cli.expect_success("-se:rps upgrade syncthing", "docker-compose... up -d")
+        cli.expect_success("--dryrun -s!rps stop syncthing", "docker-compose... stop")
+        cli.expect_success("--dryrun -s!rps start syncthing", "docker-compose... start")
+        cli.expect_success("--dryrun -s!rps restart syncthing", "docker-compose... restart")
+        cli.expect_success("--dryrun -s!rps upgrade syncthing", "docker-compose... up -d")
 
-        cli.expect_success("-so:rps backup", "ssh rps homelab-srv backup")
-        cli.expect_success("-se:rps backup", "chown=1001")
-        cli.expect_success("-se:rps backup syncthing", "Not backing up 'syncthing': special container")
+        cli.expect_success("--dryrun -srps backup", "ssh rps homelab-srv backup")
+        cli.expect_success("--dryrun -s!rps backup", "chown=1001")
+        cli.expect_success("--dryrun -s!rps backup syncthing", "Not backing up 'syncthing': special container")
 
-        cli.run("-se:rph backup pihole")
+        cli.run("--dryrun -s!rph backup pihole")
         assert cli.succeeded
         assert cli.match("rsync .+ --delete --chown=1001:1001 .srv.persist.pihole .srv.data.server-backup.rph.pihole", regex=True)
         assert cli.match("Port 443 would conflict")
 
-        cli.run("-se:rph restore pihole")
+        cli.run("--dryrun -s!rph restore pihole")
         assert cli.succeeded
         assert cli.match("rsync .+ --delete .srv.data.server-backup.rph.pihole .srv.persist.pihole", regex=True)
 
-        cli.expect_success("-se:rps restore", "Would run", "Not restoring")
+        cli.expect_success("--dryrun -s!rps restore", "Would run", "Not restoring")
 
-        cli.expect_success("--dryrun -so: push", "Would run:...rsync")
+        cli.expect_success("--dryrun push", "Would run:...rsync")
