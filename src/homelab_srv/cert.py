@@ -5,7 +5,7 @@ from pathlib import Path
 
 import runez
 
-from homelab_srv import CONFIG_YML, GSRV, PERSIST, run_rsync, run_uncaptured
+from homelab_srv import GSRV, PERSIST, run_rsync, run_uncaptured
 
 
 def file_age(path):
@@ -55,64 +55,70 @@ class CertbotDomain:
     def renew(self):
         age = file_age(self.deployed / "privkey.pem")
         if 0 <= age <= self.runner.days_cutoff:
-            logging.info("Certs are still valid for %s: %s days old (out of %s)" % (self.domain, age, self.runner.days_cutoff))
+            logging.info("Certs are still valid for %s: %.0f days old (out of %s)" % (self.domain, age, self.runner.days_cutoff))
             return
 
         self.run_certbot()
         for fname in self.pems:
             runez.copy(self.source(fname), self.dest(fname))
 
+        if self.runner.is_staging:
+            logging.info("Staging run: not publishing certs")
+            return
+
         for target in self.runner.publish:
-            run_rsync(self.deployed, target)
+            run_rsync(self.deployed, target.format(domain=self.domain))
 
 
 class CertbotRunner:
     """
     _ssl/
+        deployed/domain1.com/*.pem
         domain1.com/
             config/live/domain1.com/*.pem
             logs/
             work/
-        deployed/domain1.com/*.pem
         venv/
     """
     def __init__(self):
-        self.folder = PERSIST / "_ssl"
-        self.deployed = self.folder / "deployed"
-        self.venv = self.folder / "venv"
-        self.venv_bin = self.venv / "bin"
         self.cfg = GSRV.bcfg.cfg.get("certbot")
         if not self.cfg:
-            runez.abort("There is no 'certbot' section in %s" % CONFIG_YML)
+            runez.abort("There is no 'certbot' section in %s" % GSRV)
 
         self.host = self.get_value("host")
         provider = self.get_value("provider")
         self.provider, _, self.creds = provider.partition("@")
         if not self.creds:
-            runez.abort("No credentials file configured for provider '%s' in %s:certbot/provider" % (provider, CONFIG_YML))
+            runez.abort("No %s credentials configured in %s:certbot/provider" % (provider, GSRV))
 
         self.creds = Path(self.creds).expanduser()
         if not runez.DRYRUN and not self.creds.exists():
-            runez.abort("Credentials file '%s' does not exist in (configured in %s:certbot/provider)" % (self.creds, CONFIG_YML))
+            runez.abort("Credentials file '%s' does not exist in (configured in %s:certbot/provider)" % (self.creds, GSRV))
 
+        self.folder = GSRV.bcfg.folder if self.is_staging else PERSIST
+        self.folder = self.folder / "_ssl"
+        self.deployed = self.folder / "deployed"
+        self.venv = self.folder / "venv"
+        self.venv_bin = self.venv / "bin"
         self.email = self.get_value("email", required=False)
         self.domains = runez.flattened(self.get_value("domains"))
-        self.publish = runez.flattened(self.get_value("publish"))
+        self.publish = runez.flattened(self.get_value("publish", required=False))
         self.days_valid = 90
         self.days_prior = 20
         self.days_cutoff = self.days_valid - self.days_prior
 
+    @runez.cached_property
+    def is_staging(self):
+        return not GSRV.is_executor or GSRV.hostname != self.host
+
     def get_value(self, key, required=True):
         v = self.cfg.get(key)
-        if required and not v:
-            runez.abort("Missing key '%s' in %s:certbot" % (key, CONFIG_YML))
+        if required and v is None:
+            runez.abort("Missing key '%s' in %s:certbot" % (key, GSRV))
 
         return v
 
     def update_certs(self, domains=None):
-        if GSRV.hostname != self.host:
-            runez.abort("This command must run on host '%s'" % self.host)
-
         if not domains:
             domains = self.domains
 
@@ -126,6 +132,7 @@ class CertbotRunner:
         run_uncaptured(
             self.venv_bin / "certbot",
             "certonly",
+            "--staging" if self.is_staging else None,
             "--agree-tos",
             "--max-log-backups=5",
             "--preferred-challenges=dns",

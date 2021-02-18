@@ -16,20 +16,166 @@ SRV = Path("/srv")
 PERSIST = SRV / "persist"
 SRV_RUN = SRV / "run"
 CONFIG_YML = "_config.yml"
+SITE_SPEC_YML = "homelab-srv.yml"
+SITE_YML = "_site.yml"
 SPECIAL_DOCKER_COMPOSE_NAME = ["syncthing"]
+
+
+class GlobalState:
+    """Global config, loaded once-per run in main()"""
+
+    def __repr__(self):
+        return "%s/%s" % (runez.short(self.bcfg.folder.as_posix()), self.bcfg)
+
+    bcfg = None  # type: HomelabSite
+    hostname = None
+    is_executor = False  # True if this host is supposed to run docker services
+    site = None  # Name of site currently selected
+
+    @property
+    def is_orchestrator(self):
+        """True if this host is NOT supposed to run docker services, but remotely manage other servers instead"""
+        return not self.is_executor
+
+    def require_orchestrator(self):
+        if not self.is_orchestrator:
+            runez.abort("This command can only be ran from orchestrator machine")
+
+
+GSRV = GlobalState()
+
+
+class HomelabSite:
+    """Config as defined by {folder}/_(config|site).yml"""
+
+    def __init__(self, folder, folder_origin=None, site=None):
+        if folder:
+            if not isinstance(folder, Path):
+                folder = Path(folder)
+
+            if folder.name == SITE_SPEC_YML:
+                folder = folder.parent
+
+            if site:
+                folder = folder / site
+
+        self.folder = folder
+        self.folder_origin = folder_origin
+        self.site = site
+        self.cfg_yml = self.folder and (self.folder / SITE_YML)
+        self.cfg = read_yml(self.cfg_yml) or {}
+        self.dc_files = {}  # type: dict[str, SYDC]
+        self.yaml_key = "%s:" % SITE_YML
+        if site:
+            self.yaml_key = "%s/%s" % (site, self.yaml_key)
+
+        if self.folder and self.folder.is_dir():
+            for fname in self.folder.glob("*.yml"):
+                if not fname.name.startswith("_"):
+                    dc = SYDC(self, fname)
+                    self.dc_files[dc.dc_name] = dc
+
+            for fname in folder.glob("*/docker-compose.yml"):
+                dc = SYDC(self, fname)
+                self.dc_files[dc.dc_name] = dc
+
+        self.env = self.cfg.get("env")
+        self.run = SYRun(self)
+        self.backup = SYBackup(self)
+
+    def __repr__(self):
+        return self.yaml_key
+
+    def get_dcs(self, names=None):
+        dcs = list(self.dc_files.values())
+        if names in ("all", "*"):
+            return dcs
+
+        if names == "special":
+            return [x for x in dcs if x.is_special]
+
+        if names == "vanilla":
+            return [x for x in dcs if x.vanilla_backup]
+
+        if not names:
+            return [x for x in dcs if not x.is_special]
+
+        names = runez.flattened(names, keep_empty=None, split=",")
+        bad_refs = [x for x in names if x not in self.dc_files]
+        if bad_refs:
+            runez.abort("Unknown docker-compose refs: %s" % ", ".join(bad_refs))
+
+        return [x for x in dcs if x.dc_name in names]
+
+    def get_hosts(self, names=None):
+        if not names or names in ("all", "*"):
+            return self.run.hostnames
+
+        names = runez.flattened(names, keep_empty=None, split=",")
+        bad_refs = [x for x in names if x not in self.run.hostnames]
+        if bad_refs:
+            runez.abort("Host(s) not configured: %s" % ", ".join(bad_refs))
+
+        return names
+
+    def dc_name_check(self, names, origin):
+        if names:
+            for name in names:
+                if name not in self.dc_files:
+                    yield self, "DC definition '%s' does not exist (referred from %s)" % (name, origin)
+
+    @runez.cached_property
+    def conflicting_ports(self):
+        return {k: v for k, v in self.used_host_ports().items() if len(v) > 1}
+
+    def used_host_ports(self, by_port=True):
+        result = defaultdict(set)
+        for dc in self.dc_files.values():
+            for s in dc.services.values():
+                if s.ports and s.ports.host_side:
+                    for port in s.ports.host_side:
+                        port = int(port)
+                        if by_port:
+                            result[port].add(dc.dc_name)
+
+                        else:
+                            result[dc.dc_name].add(port)
+
+        return result
+
+    def sanity_check(self):
+        if not self.folder:
+            yield self, "Run this to configure where your '%s' is: %s set-folder PATH" % (SITE_SPEC_YML, SCRIPT_NAME)
+            return
+
+        if not self.cfg_yml.exists():
+            yield self, "%s does not exist" % self.cfg_yml
+            return
+
+        if not self.dc_files:
+            yield self, "%s has no docker-compose files defined" % self.folder
+
+        for dc in self.dc_files.values():
+            yield from dc.sanity_check()
+
+        for port, dc_names in self.conflicting_ports.items():
+            yield self, "Port %s would conflict on same host for dcs: %s" % (port, " ".join(dc_names))
+
+        yield from self.run.sanity_check()
+        yield from self.backup.sanity_check()
+
+
+def read_yml(path: Path, default=None):
+    if path and path.exists():
+        with open(path) as fh:
+            return yaml.load(fh, Loader=yaml.BaseLoader)
+
+    return default
 
 
 def run_docker(*args):
     assert GSRV.is_executor
     return runez.run("docker", *args, stdout=None, stderr=None)
-
-
-def run_ssh(hostname, *args):
-    GSRV.require_orchestrator()
-    if hostname not in GSRV.bcfg.run.hostnames:
-        runez.abort("Host '%s' is not defined in config %s" % (hostname, runez.short(GSRV.bcfg.cfg_yml)))
-
-    run_uncaptured("ssh", hostname, *args)
 
 
 def run_rsync(src, dest, sudo=False, env=None):
@@ -56,36 +202,16 @@ def run_rsync(src, dest, sudo=False, env=None):
     run_uncaptured(*cmd, src, dest)
 
 
+def run_ssh(hostname, *args):
+    GSRV.require_orchestrator()
+    if hostname not in GSRV.bcfg.run.hostnames:
+        runez.abort("Host '%s' is not defined in config %s" % (hostname, runez.short(GSRV.bcfg.cfg_yml)))
+
+    run_uncaptured("ssh", hostname, *args)
+
+
 def run_uncaptured(program, *args):
     runez.run(str(program), *args, stdout=None, stderr=None, logger=logging.info)
-
-
-class GlobalState:
-    """Tracks global state"""
-
-    bcfg = None  # type: SrvFolder
-    hostname = None
-    is_executor = False  # True if this host is supposed to run docker services
-
-    @property
-    def is_orchestrator(self):
-        """True if this host is NOT supposed to run docker services, but remotely manage other servers instead"""
-        return not self.is_executor
-
-    def require_orchestrator(self):
-        if not self.is_orchestrator:
-            runez.abort("This command can only be ran from orchestrator machine")
-
-
-GSRV = GlobalState()
-
-
-def read_yml(path: Path, default=None):
-    if path and path.exists():
-        with open(path) as fh:
-            return yaml.load(fh, Loader=yaml.BaseLoader)
-
-    return default
 
 
 def slash_trail(path, trail=False):
@@ -96,13 +222,23 @@ def slash_trail(path, trail=False):
 class DCItem:
     """Common things across docker-compose definitions we're working with"""
 
-    def __init__(self, parent: Union["SrvFolder", "DCItem"], cfg=None, key=None):
+    def __init__(self, parent: Union[HomelabSite, "DCItem"], cfg=None, key=None):
         self.parent = parent
         self.yaml_key = key or self.__class__.__name__[2:].lower()
         self.cfg = cfg if cfg is not None else parent.cfg.get(self.yaml_key, {})  # type: dict
 
     def __repr__(self):
-        return self.yaml_source
+        result = ""
+        parent = self
+        while parent:
+            key = getattr(parent, "yaml_key", None)
+            if key:
+                sep = "" if not result or key[-1] in ":/" else "/"
+                result = "%s%s%s" % (key, sep, result)
+
+            parent = getattr(parent, "parent", None)
+
+        return result
 
     def _parent_of_type(self, t):
         parent = self
@@ -117,25 +253,8 @@ class DCItem:
         return self._parent_of_type(SYDC)
 
     @runez.cached_property
-    def dc_config(self) -> "SrvFolder":
-        return self._parent_of_type(SrvFolder)
-
-    @runez.cached_property
-    def yaml_source(self):
-        keys = [self.yaml_key]
-        parent = getattr(self, "parent")
-        root = ""
-        while parent:
-            if isinstance(parent, SYDC):
-                root = "%s:" % parent.dc_name
-                break
-
-            key = getattr(parent, "yaml_key", None)
-            parent = getattr(parent, "parent", None)
-            if key:
-                keys.append(key)
-
-        return root + "/".join(reversed(keys))
+    def dc_config(self) -> HomelabSite:
+        return self._parent_of_type(HomelabSite)
 
 
 class DCEnvironment(DCItem):
@@ -196,18 +315,6 @@ class DCVolumes(DCItem):
 
         return n == len(self.volumes)
 
-    def sanity_check(self):
-        if not self.cfg or self.dc_file.is_special:
-            return
-
-        expected_persist = PERSIST / self.dc_file.dc_name
-        expected_parts = expected_persist.parts
-        part_count = len(expected_parts)
-        for vol in self.volumes:
-            vol_parts = Path(vol).parts
-            if len(vol_parts) < part_count or vol_parts[:part_count] != expected_parts:
-                yield self, "Volume '%s' should be '%s'" % (vol, expected_persist.as_posix())
-
 
 class DCService(DCItem):
 
@@ -222,11 +329,10 @@ class DCService(DCItem):
 
     def sanity_check(self):
         yield from self.environment.sanity_check()
-        yield from self.volumes.sanity_check()
 
 
 class SYRun(DCItem):
-    """'run:' entry in _config.yml"""
+    """'run:' entry in _site.yml"""
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -241,14 +347,14 @@ class SYRun(DCItem):
 
     def sanity_check(self):
         if not self.hostnames:
-            yield self, "no hosts are defined in %s run: section" % CONFIG_YML
+            yield self, "no hosts are defined in %s run: section" % self
 
         for hostname, dc_names in self.dcs_by_host.items():
-            yield from self.dc_config.dc_name_check(dc_names, "%s:run/%s" % (CONFIG_YML, hostname))
+            yield from self.dc_config.dc_name_check(dc_names, "%s/%s" % (self, hostname))
 
 
 class SYBackup(DCItem):
-    """'backup:' entry in _config.yml"""
+    """'backup:' entry in _site.yml"""
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -264,8 +370,8 @@ class SYBackup(DCItem):
         return dest / dc.dc_name
 
     def sanity_check(self):
-        yield from self.dc_config.dc_name_check(self.per_host, "%s:backup/per_host" % CONFIG_YML)
-        yield from self.dc_config.dc_name_check(self.restrict, "%s:backup/restrict" % CONFIG_YML)
+        yield from self.dc_config.dc_name_check(self.per_host, "%s/per_host" % self)
+        yield from self.dc_config.dc_name_check(self.restrict, "%s/restrict" % self)
 
 
 class SYDC(DCItem):
@@ -282,6 +388,9 @@ class SYDC(DCItem):
         for k, v in self.cfg.items():
             service = DCService(self, k, v)
             self.services[service.service_name] = service
+
+    def __repr__(self):
+        return self.dc_name
 
     def sanity_check(self):
         for s in self.services.values():
@@ -388,140 +497,3 @@ class SYDC(DCItem):
         self.backup()
         run_docker("image", "prune", "-f")
         self.run_docker_compose("up", "-d")
-
-
-def find_base_folder() -> (Path, str):
-    if not runez.log.current_test():  # pragma: no cover
-        if SRV_RUN.is_dir():
-            return SRV_RUN, None
-
-        configured = runez.readlines(CONFIG_PATH, default=None, first=1)
-        if configured and configured[0]:
-            path = os.path.expanduser(configured[0])
-            if path.endswith(CONFIG_YML):
-                path = os.path.dirname(path)
-
-            if os.path.isdir(path):
-                return Path(path), CONFIG_PATH
-
-            else:
-                logging.warning("Path configured in %s is invalid: %s" % (CONFIG_YML, path))
-
-    local = Path(os.getcwd()) / CONFIG_YML
-    if local.exists():
-        logging.info("Using %s from current working dir: %s" % (CONFIG_YML, local))
-        return local.parent, "cwd"
-
-    return None, None
-
-
-class SrvFolder:
-    """Config as defined by {folder}/_config.yml"""
-
-    def __init__(self, folder=None):
-        self.folder_origin = None
-        if not folder:
-            folder, self.folder_origin = find_base_folder()
-
-        if folder and not isinstance(folder, Path):
-            folder = Path(folder)
-
-        self.folder = folder
-        self.cfg_yml = self.folder and (self.folder / CONFIG_YML)
-        self.cfg = read_yml(self.cfg_yml) or {}
-        self.dc_files = {}  # type: dict[str, SYDC]
-
-        if self.folder and self.folder.is_dir():
-            for fname in self.folder.glob("*.yml"):
-                if not fname.name.startswith("_"):
-                    dc = SYDC(self, fname)
-                    self.dc_files[dc.dc_name] = dc
-
-            for fname in folder.glob("*/docker-compose.yml"):
-                dc = SYDC(self, fname)
-                self.dc_files[dc.dc_name] = dc
-
-        self.env = self.cfg.get("env")
-        self.run = SYRun(self)
-        self.backup = SYBackup(self)
-
-    def __repr__(self):
-        return self.folder.as_posix() if self.folder else self.__class__.__name__
-
-    def get_dcs(self, names=None):
-        dcs = list(self.dc_files.values())
-        if names in ("all", "*"):
-            return dcs
-
-        if names == "special":
-            return [x for x in dcs if x.is_special]
-
-        if names == "vanilla":
-            return [x for x in dcs if x.vanilla_backup]
-
-        if not names:
-            return [x for x in dcs if not x.is_special]
-
-        names = runez.flattened(names, keep_empty=None, split=",")
-        bad_refs = [x for x in names if x not in self.dc_files]
-        if bad_refs:
-            runez.abort("Unknown docker-compose refs: %s" % ", ".join(bad_refs))
-
-        return [x for x in dcs if x.dc_name in names]
-
-    def get_hosts(self, names=None):
-        if not names or names in ("all", "*"):
-            return self.run.hostnames
-
-        names = runez.flattened(names, keep_empty=None, split=",")
-        bad_refs = [x for x in names if x not in self.run.hostnames]
-        if bad_refs:
-            runez.abort("Host(s) not configured: %s" % ", ".join(bad_refs))
-
-        return names
-
-    def dc_name_check(self, names, origin):
-        if names:
-            for name in names:
-                if name not in self.dc_files:
-                    yield self, "DC definition '%s' does not exist (referred from %s)" % (name, origin)
-
-    @runez.cached_property
-    def conflicting_ports(self):
-        return {k: v for k, v in self.used_host_ports().items() if len(v) > 1}
-
-    def used_host_ports(self, by_port=True):
-        result = defaultdict(set)
-        for dc in self.dc_files.values():
-            for s in dc.services.values():
-                if s.ports and s.ports.host_side:
-                    for port in s.ports.host_side:
-                        port = int(port)
-                        if by_port:
-                            result[port].add(dc.dc_name)
-
-                        else:
-                            result[dc.dc_name].add(port)
-
-        return result
-
-    def sanity_check(self):
-        if not self.folder:
-            yield self, "Run this to configure where your %s is: %s set-folder PATH" % (CONFIG_YML, SCRIPT_NAME)
-            return
-
-        if not self.cfg_yml.exists():
-            yield self, "%s does not exist" % self.cfg_yml
-            return
-
-        if not self.dc_files:
-            yield self, "%s has no docker-compose files defined" % self.folder
-
-        for dc in self.dc_files.values():
-            yield from dc.sanity_check()
-
-        for port, dc_names in self.conflicting_ports.items():
-            yield self, "Port %s would conflict on same host for dcs: %s" % (port, " ".join(dc_names))
-
-        yield from self.run.sanity_check()
-        yield from self.backup.sanity_check()

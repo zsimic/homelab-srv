@@ -1,31 +1,40 @@
+import os
+
 import pytest
 import runez
 
-from homelab_srv import slash_trail, SrvFolder
+from homelab_srv import HomelabSite, slash_trail
+
+
+def from_sample(name, site=None):
+    path = runez.log.tests_path(name)
+    if site:
+        path = os.path.join(path, site)
+
+    return HomelabSite(path, site)
 
 
 def test_sample():
-    no_folder = SrvFolder(None)
+    no_folder = HomelabSite(None)
     assert "Run this to configure" in str(list(no_folder.sanity_check()))
 
-    no_folder = SrvFolder(runez.log.tests_path("no-such-folder"))
+    no_folder = from_sample("no-such-folder")
     assert not no_folder.cfg
     assert not no_folder.dc_files
     assert "does not exist" in str(list(no_folder.sanity_check()))
 
-    bogus = SrvFolder(runez.log.tests_path("bogus"))
+    bogus = from_sample("bogus", "site1")
     problems = str(list(bogus.sanity_check()))
     assert "has no docker-compose files" in problems
-    assert "referred from _config.yml:run/rps" in problems
-    assert "referred from _config.yml:backup/per_host" in problems
+    assert "referred from _site.yml:run/rps" in problems
+    assert "referred from _site.yml:backup/per_host" in problems
 
-    empty = SrvFolder(runez.log.tests_path("empty"))
+    empty = from_sample("empty")
     problems = list(empty.sanity_check())
     assert "has no docker-compose files" in str(problems)
     assert "no hosts" in str(problems)
 
-    folder = runez.log.tests_path("sample")
-    cfg = SrvFolder(folder)
+    cfg = from_sample("sample", "site1")
     assert str(cfg)
     assert cfg.get_hosts() == ["rps", "rph"]
     assert cfg.get_hosts("rps,rph") == ["rps", "rph"]

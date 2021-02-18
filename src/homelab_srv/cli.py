@@ -17,7 +17,7 @@ import runez
 from runez.render import PrettyTable
 
 import homelab_srv
-from homelab_srv import CONFIG_PATH, CONFIG_YML, GSRV, run_rsync, run_ssh, run_uncaptured, SCRIPT_NAME, SRV_RUN, SrvFolder
+from homelab_srv import CONFIG_PATH, GSRV, HomelabSite, read_yml, run_rsync, run_ssh, run_uncaptured, SITE_SPEC_YML, SRV_RUN
 
 
 def colored_port(port):
@@ -75,7 +75,7 @@ class CliTarget:
         for hostname in self.hosts:
             should_run = GSRV.bcfg.run.dc_names_for_host(hostname) or []
             if any(dc.dc_name in should_run for dc in self.dcs):
-                run_ssh(hostname, SCRIPT_NAME, self.command, self.given, *args)
+                run_ssh(hostname, homelab_srv.SCRIPT_NAME, self.command, self.given, *args)
 
 
 def target_option():
@@ -87,27 +87,76 @@ def get_hostname():
     return runez.run(cmd, dryrun=False, logger=None).output if os.path.exists(cmd) else os.environ.get("COMPUTERNAME") or ""
 
 
+def base_from_spec(candidate, selected_site):
+    path = Path(candidate) / SITE_SPEC_YML
+    if path.exists():
+        cfg = read_yml(path)
+        if not cfg:
+            logging.warning("File '%s' is not valid yaml" % path)
+            return None, selected_site
+
+        sites = runez.flattened(cfg.get("sites"), keep_empty=None, split=",")
+        if not sites:
+            logging.warning("File '%s' does not define any 'sites:'" % path)
+            return None, selected_site
+
+        if not selected_site:
+            selected_site = sites[0]
+
+        if selected_site not in sites:
+            logging.warning("Site '%s' is not defined in %s" % (selected_site, path))
+
+        return path, selected_site
+
+    return None, selected_site
+
+
+def find_base_folder(site) -> (Path, str):
+    if not runez.log.current_test():  # pragma: no cover
+        if SRV_RUN.is_dir():
+            return SRV_RUN, None, None
+
+        configured = runez.readlines(CONFIG_PATH, default=None, first=1)
+        if configured and configured[0]:
+            path, site = base_from_spec(os.path.expanduser(configured[0]), site)
+            if path:
+                return path, CONFIG_PATH, site
+
+            logging.warning("Path configured in %s is invalid: %s" % (CONFIG_PATH, path))
+
+    path, site = base_from_spec(os.getcwd(), site)
+    if path:
+        logging.info("Using spec from current working dir: %s" % path)
+        return path, "cwd", site
+
+    return None, None, site
+
+
 @runez.click.group(epilog=__doc__)
 @click.pass_context
-@runez.click.version(prog_name=SCRIPT_NAME, version=homelab_srv.__version__)
+@runez.click.version(prog_name=homelab_srv.SCRIPT_NAME, version=homelab_srv.__version__)
 @runez.click.debug()
 @runez.click.dryrun("-n")
 @runez.click.color()
-@click.option("--simulate", "-s", help="Simulate a hostname, for troubleshooting/test runs")
-def main(ctx, debug, simulate):
+@click.option("--site", "-s", help="Simulate a hostname, for troubleshooting/test runs")
+def main(ctx, debug, site):
     """Manage dockerized servers"""
     runez.system.AbortException = SystemExit
     runez.log.setup(debug=debug, level=logging.INFO, console_format="%(levelname)s %(message)s", default_logger=logging.info)
-    GSRV.bcfg = SrvFolder()
-    GSRV.hostname = get_hostname()
-    GSRV.is_executor = not runez.log.current_test() and GSRV.bcfg.folder and GSRV.bcfg.folder is SRV_RUN
-    if simulate:
-        runez.log.set_dryrun(True)
-        if simulate[0] == "!":
-            GSRV.is_executor = True
-            simulate = simulate[1:]
+    GSRV.is_executor = None
+    GSRV.hostname = None
+    if site and ":" in site:
+        assert runez.DRYRUN
+        GSRV.is_executor = True
+        site, _, GSRV.hostname = site.partition(":")
 
-        GSRV.hostname = simulate
+    path, origin, site = find_base_folder(site)
+    GSRV.bcfg = HomelabSite(path, origin, site)
+    if GSRV.is_executor is None:
+        GSRV.is_executor = GSRV.bcfg.folder is SRV_RUN
+
+    if not GSRV.hostname:
+        GSRV.hostname = get_hostname()
 
     if ctx.invoked_subcommand != "meta":
         fatal = 0
@@ -156,7 +205,7 @@ def mkpass(pwd):
 @meta.command()
 @click.argument("folder", required=False)
 def set_folder(folder):
-    """Configure where your _config.yml is"""
+    """Configure where your homelab-srv config is"""
     GSRV.require_orchestrator()
     if not folder:
         cfg_loc = runez.dim("(in %s)" % CONFIG_PATH)
@@ -172,7 +221,7 @@ def set_folder(folder):
     if not folder.is_dir():
         runez.abort("Folder '%s' does not exist" % folder)
 
-    cfg_yml = folder / CONFIG_YML
+    cfg_yml = folder / SITE_SPEC_YML
     if not cfg_yml.exists():
         runez.abort("'%s' does not exist" % cfg_yml)
 
@@ -287,7 +336,7 @@ def ps():
         return
 
     for hostname in GSRV.bcfg.run.hostnames:
-        run_ssh(hostname, SCRIPT_NAME, "--color", "ps")
+        run_ssh(hostname, homelab_srv.SCRIPT_NAME, "--color", "ps")
 
 
 def push_srv_to_host(hostname):

@@ -9,7 +9,7 @@ services:
     #   - /dev/ttyUSB1:/dev/ttyUSB1
     #   - /dev/ttyACM0:/dev/ttyACM0
     environment:
-      - PUID=123  # Simulating wrong PUID (does not match the one state in _config.yml)
+      - PUID=123  # Simulating wrong PUID (does not match the one stated in _site.yml)
       - TZ=America/Los_Angeles
     network_mode: host
     restart: unless-stopped
