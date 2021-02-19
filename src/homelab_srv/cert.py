@@ -67,7 +67,8 @@ class CertbotDomain:
             return
 
         for target in self.runner.publish:
-            run_rsync(self.deployed, target.format(domain=self.domain))
+            if target:
+                run_rsync(self.deployed, target.format(domain=self.domain))
 
 
 class CertbotRunner:

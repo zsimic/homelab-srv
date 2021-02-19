@@ -190,6 +190,10 @@ def run_rsync(src, dest, sudo=False, env=None):
         cmd.append("--chown=%s:%s" % (env["PUID"], env["PGID"]))
 
     need_trail = os.path.isdir(src)
+    src = str(src)
+    dest = str(dest)
+    assert len(src) > 7
+    assert len(dest) > 7
     if ":" not in str(dest):
         if need_trail:
             runez.ensure_folder(dest, logger=logging.info)
@@ -215,7 +219,7 @@ def run_uncaptured(program, *args):
 
 
 def slash_trail(path, trail=False):
-    path = str(path).rstrip("/")
+    path = path.rstrip("/")
     return "%s/" % path if trail else path
 
 
