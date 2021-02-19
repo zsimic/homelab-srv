@@ -103,7 +103,8 @@ class CertbotRunner:
         self.venv_bin = self.venv / "bin"
         self.email = self.get_value("email", required=False)
         self.domains = runez.flattened(self.get_value("domains"))
-        self.publish = runez.flattened(self.get_value("publish", required=False))
+        publish = self.get_value("publish", required=False)
+        self.publish = runez.flattened(publish) if publish else []
         self.days_valid = 90
         self.days_prior = 20
         self.days_cutoff = self.days_valid - self.days_prior
