@@ -135,6 +135,7 @@ class CertbotRunner:
             self.venv_bin / "certbot",
             "certonly",
             "--staging" if self.is_staging else None,
+            "--non-interactive",
             "--agree-tos",
             "--max-log-backups=5",
             "--preferred-challenges=dns",
