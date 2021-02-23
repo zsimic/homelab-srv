@@ -16,7 +16,7 @@ SRV = Path("/srv")
 PERSIST = SRV / "persist"
 SRV_RUN = SRV / "run"
 CONFIG_YML = "_config.yml"
-SITE_SPEC_YML = "homelab-srv.yml"
+SITE_SPEC_YML = "_sites.yml"
 SITE_YML = "_site.yml"
 SPECIAL_DOCKER_COMPOSE_NAME = ["syncthing"]
 
