@@ -3,7 +3,26 @@ import os
 import pytest
 import runez
 
-from homelab_srv import HomelabSite, slash_trail
+from homelab_srv import GlobalState, HomelabSite, slash_trail
+from homelab_srv.cli import find_base_folder
+
+
+def test_edge_cases(temp_folder, logged):
+    assert str(GlobalState())
+    assert find_base_folder(".", "foo") == (None, None, "foo")
+
+    runez.touch("_sites.yml")
+    assert find_base_folder(".", "foo") == (None, None, "foo")
+    assert "is not valid yaml" in logged.pop()
+
+    runez.write("_sites.yml", "foo: bar")
+    assert find_base_folder(".", "foo") == (None, None, "foo")
+    assert "does not define any 'sites:'" in logged.pop()
+
+    runez.write("_sites.yml", "sites:\n  - site1")
+    _, origin, _ = find_base_folder(".", "foo")
+    assert "Site 'foo' is not defined" in logged.pop()
+    assert origin == "cwd"
 
 
 def from_sample(name, site=None):
@@ -45,6 +64,10 @@ def test_sample():
 
     pihole = cfg.dc_files.get("pihole")
     assert pihole.images == ["pihole/pihole:latest"]
+    with runez.CaptureOutput(dryrun=True):
+        assert not pihole.is_running
+        pihole.running_docker_images["pihole/pihole:latest"] = True
+        assert pihole.is_running
 
     with pytest.raises(BaseException):
         cfg.get_hosts("foo")

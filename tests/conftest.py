@@ -1,4 +1,4 @@
-from runez.conftest import cli
+from runez.conftest import cli, logged, temp_folder  # noqa: F401 (fixtures)
 
 from homelab_srv.cli import main
 

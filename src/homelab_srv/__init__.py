@@ -26,7 +26,7 @@ class GlobalState:
     """Global config, loaded once-per run in main()"""
 
     def __repr__(self):
-        return "%s/%s" % (runez.short(self.bcfg.folder.as_posix()), self.bcfg)
+        return "%s" % self.bcfg
 
     bcfg = None  # type: HomelabSite
     hostname = None
@@ -196,11 +196,7 @@ def run_rsync(src, dest, sudo=False, env=None):
     assert len(src) > 7
     assert len(dest) > 7
     if ":" not in str(dest):
-        if need_trail:
-            runez.ensure_folder(dest, logger=logging.info)
-
-        else:
-            runez.ensure_folder(os.path.dirname(dest), logger=logging.info)
+        runez.ensure_folder(dest if need_trail else os.path.dirname(dest), logger=logging.info)
 
     src = slash_trail(src, trail=need_trail)
     dest = slash_trail(dest, trail=need_trail)

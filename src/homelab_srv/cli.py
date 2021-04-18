@@ -111,7 +111,7 @@ def base_from_spec(candidate, selected_site):
     return None, selected_site
 
 
-def find_base_folder(site) -> (Path, str):
+def find_base_folder(path=None, site=None) -> (Path, str):
     if not runez.log.current_test():  # pragma: no cover
         if SRV_RUN.is_dir():
             return SRV_RUN, None, None
@@ -124,7 +124,7 @@ def find_base_folder(site) -> (Path, str):
 
             logging.warning("Path configured in %s is invalid: %s" % (CONFIG_PATH, path))
 
-    path, site = base_from_spec(os.getcwd(), site)
+    path, site = base_from_spec(path or os.getcwd(), site)
     if path:
         logging.info("Using spec from current working dir: %s" % path)
         return path, "cwd", site
@@ -138,19 +138,25 @@ def find_base_folder(site) -> (Path, str):
 @runez.click.debug()
 @runez.click.dryrun("-n")
 @runez.click.color()
-@click.option("--site", "-s", help="Simulate a hostname, for troubleshooting/test runs")
-def main(ctx, debug, site):
+@click.option("--simulate", "-s", help="Simulate a hostname, for troubleshooting/test runs")
+def main(ctx, debug, simulate):
     """Manage dockerized servers"""
     runez.system.AbortException = SystemExit
     runez.log.setup(debug=debug, level=logging.INFO, console_format="%(levelname)s %(message)s", default_logger=logging.info)
     GSRV.is_executor = None
     GSRV.hostname = None
-    if site and ":" in site:
+    path = site = None
+    if simulate:
         assert runez.DRYRUN
-        GSRV.is_executor = True
-        site, _, GSRV.hostname = site.partition(":")
+        if ":" in simulate:
+            GSRV.is_executor = True
+            site, _, GSRV.hostname = simulate.partition(":")
 
-    path, origin, site = find_base_folder(site)
+        elif "@" in simulate:
+            GSRV.is_executor = True
+            site, _, path = simulate.partition("@")
+
+    path, origin, site = find_base_folder(path=path, site=site)
     GSRV.bcfg = HomelabSite(path, origin, site)
     if GSRV.is_executor is None:
         GSRV.is_executor = GSRV.bcfg.folder is SRV_RUN
@@ -339,9 +345,10 @@ def ps():
 
 def push_srv_to_host(hostname, self_upgrade):
     GSRV.require_orchestrator()
-    run_rsync(GSRV.bcfg.folder, "%s:%s" % (hostname, SRV_RUN.as_posix()))
     if self_upgrade:
         run_ssh(hostname, "/usr/local/bin/pickley", "install", "https://github.com/zsimic/homelab-srv.git")
+
+    run_rsync(GSRV.bcfg.folder, "%s:%s" % (hostname, SRV_RUN.as_posix()))
 
 
 @main.command()

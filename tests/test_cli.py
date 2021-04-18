@@ -18,7 +18,7 @@ def test_bogus(cli):
         )
 
 
-def test_certs(cli):
+def test_certbot(cli):
     with runez.CurrentFolder(runez.log.tests_path("sample")):
         cli.run("-n certbot example.com")
         assert cli.succeeded
@@ -66,8 +66,12 @@ def test_sample(cli):
         assert cli.succeeded
         assert "ssh rps homelab-srv upgrade home-assistant --force" in cli.logged
 
+        cli.expect_success("-n ps", "Would run: ...ssh ... --color ps")
+        cli.expect_success("-n -s:rps ps", "not running")
+
         cli.expect_success("-n -s:rps stop syncthing", "docker-compose... stop")
         cli.expect_success("-n -s:rps start syncthing", "docker-compose... start")
+        cli.expect_success("-n -s:rps logs syncthing", "docker-compose... logs")
         cli.expect_success("-n -s:rps restart syncthing", "docker-compose... restart")
         cli.expect_success("-n -s:rps upgrade syncthing", "docker-compose... up -d")
 
@@ -88,4 +92,20 @@ def test_sample(cli):
         assert cli.succeeded
         assert "Not restoring" in cli.logged
 
+        cli.run("-n --debug push -u foo")
+        assert cli.failed
+        assert "Host 'foo' is not defined in config" in cli.logged
+
         cli.expect_success("-n push", "Would run:...rsync")
+
+
+def test_seed(cli):
+    site = runez.log.tests_path("sample")
+    cli.run("-n -ssite1@%s seed ssh --key my-key foo@bar" % site)
+    assert cli.failed
+    assert "does not exist" in cli.logged
+
+    runez.touch("my-key")
+    cli.run("-n -ssite1@%s seed ssh --key my-key foo@bar" % site)
+    assert cli.succeeded
+    assert "already works" in cli.logged

@@ -27,4 +27,4 @@ certbot:
   - example.com
   - example.org
   publish:
-  - some-remote-host:/srv/persist/_ssl/deployed/{domain}
+  - some-remote-host:/srv/ssl/deployed/{domain}

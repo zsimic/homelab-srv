@@ -73,7 +73,7 @@ class CertbotDomain:
 
 class CertbotRunner:
     """
-    _ssl/
+    /srv/ssl/
         deployed/domain1.com/*.pem
         domain1.com/
             config/live/domain1.com/*.pem
