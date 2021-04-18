@@ -73,7 +73,7 @@ def test_sample(cli):
 
         cli.expect_success("-n backup", "ssh rps homelab-srv backup")
         cli.expect_success("-n -s:rps backup", "chown=1001")
-        cli.expect_success("-n -s:rps backup syncthing", "Not backing up 'syncthing': special container")
+        cli.expect_success("-n --debug -s:rps backup syncthing", "Not backing up 'syncthing': special container")
 
         cli.run("-n -s:rph backup pihole")
         assert cli.succeeded
@@ -84,6 +84,8 @@ def test_sample(cli):
         assert cli.succeeded
         assert cli.match("rsync .+ --delete .srv.data.server-backup.rph.pihole .srv.persist.pihole", regex=True)
 
-        cli.expect_success("-n -s:rps restore", "Would run", "Not restoring")
+        cli.run("-n --debug -s:rps restore")
+        assert cli.succeeded
+        assert "Not restoring" in cli.logged
 
         cli.expect_success("-n push", "Would run:...rsync")

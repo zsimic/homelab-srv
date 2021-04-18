@@ -13,8 +13,9 @@ CONFIG_PATH = "~/.config/homelab-srv.conf"
 SCRIPT_NAME = "homelab-srv"
 DEFAULT_BACKUP_FOLDER = "/srv/data/server-backup"
 SRV = Path("/srv")
-PERSIST = SRV / "persist"
+SRV_PERSIST = SRV / "persist"
 SRV_RUN = SRV / "run"
+SRV_SSL = SRV / "ssl"
 CONFIG_YML = "_config.yml"
 SITE_SPEC_YML = "_sites.yml"
 SITE_YML = "_site.yml"
@@ -310,7 +311,7 @@ class DCVolumes(DCItem):
     @runez.cached_property
     def vanilla_backup(self):
         n = 0
-        expected_parts = (PERSIST / self.dc_file.dc_name).parts
+        expected_parts = (SRV_PERSIST / self.dc_file.dc_name).parts
         part_count = len(expected_parts)
         for vol in self.volumes:
             vol_parts = Path(vol).parts
@@ -434,13 +435,13 @@ class SYDC(DCItem):
         action = "restoring" if invert else "backing up"
         if self.is_special:
             if not auto:
-                logging.info("Not %s '%s': special container" % (action, self.dc_name))
+                logging.debug("Not %s '%s': special container" % (action, self.dc_name))
 
             return
 
         if not self.vanilla_backup:
             if not auto:
-                logging.info("Not %s '%s': it does NOT use volume %s/%s" % (action, self.dc_name, PERSIST, self.dc_name))
+                logging.debug("Not %s '%s': it does NOT use volume %s/%s" % (action, self.dc_name, SRV_PERSIST, self.dc_name))
 
             return
 
@@ -453,7 +454,7 @@ class SYDC(DCItem):
         backup_dest = self.parent.backup.backup_destination(self)
         env = self.dc_config.env
         for rel_path in configured:
-            src = PERSIST / self.dc_name / rel_path
+            src = SRV_PERSIST / self.dc_name / rel_path
             dest = backup_dest / rel_path
             if invert:
                 env = None
@@ -473,6 +474,10 @@ class SYDC(DCItem):
                 updated += 1
 
         return updated
+
+    def logs(self):
+        assert GSRV.is_executor
+        self.run_docker_compose("logs")
 
     def restore(self, auto=False):
         self.backup(invert=True, auto=auto)

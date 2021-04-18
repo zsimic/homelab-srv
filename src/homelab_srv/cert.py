@@ -5,7 +5,7 @@ from pathlib import Path
 
 import runez
 
-from homelab_srv import GSRV, PERSIST, run_rsync, run_uncaptured
+from homelab_srv import GSRV, run_rsync, run_uncaptured, SRV_SSL
 
 
 def file_age(path):
@@ -96,8 +96,10 @@ class CertbotRunner:
         if not runez.DRYRUN and not self.creds.exists():
             runez.abort("Credentials file '%s' does not exist in (configured in %s:certbot/provider)" % (self.creds, GSRV))
 
-        self.folder = GSRV.bcfg.folder if self.is_staging else PERSIST
-        self.folder = self.folder / "_ssl"
+        self.folder = SRV_SSL
+        if self.is_staging:
+            self.folder = GSRV.bcfg.folder / "_ssl"
+
         self.deployed = self.folder / "deployed"
         self.venv = self.folder / "venv"
         self.venv_bin = self.venv / "bin"

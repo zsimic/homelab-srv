@@ -182,6 +182,13 @@ def certbot(domain):
     m.update_certs(domain)
 
 
+@main.command()
+@target_option()
+def logs(target):
+    """Show logs for specified container"""
+    target.run()
+
+
 @main.group()
 def meta():
     """Meta/utility subcommands"""
