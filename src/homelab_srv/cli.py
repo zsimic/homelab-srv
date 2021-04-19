@@ -379,11 +379,10 @@ def start(target):
 
 
 @main.command()
-@click.option("--down", "-d", is_flag=True, help="Use 'docker-compose down' instead of simple stop")
 @target_option()
-def stop(down, target):
+def stop(target):
     """Stop target(s)"""
-    target.run(down=down)
+    target.run()
 
 
 @main.command()

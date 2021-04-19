@@ -69,7 +69,7 @@ def test_sample(cli):
         cli.expect_success("-n ps", "Would run: ...ssh ... --color ps")
         cli.expect_success("-n -s:rps ps", "not running")
 
-        cli.expect_success("-n -s:rps stop syncthing", "docker-compose... stop")
+        cli.expect_success("-n -s:rps stop syncthing", "docker-compose... down")
         cli.expect_success("-n -s:rps start syncthing", "docker-compose... start")
         cli.expect_success("-n -s:rps logs syncthing", "docker-compose... logs")
         cli.expect_success("-n -s:rps restart syncthing", "docker-compose... restart")

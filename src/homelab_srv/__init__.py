@@ -486,9 +486,9 @@ class SYDC(DCItem):
         assert GSRV.is_executor
         self.run_docker_compose("start")
 
-    def stop(self, down=True):
+    def stop(self):
         assert GSRV.is_executor
-        self.run_docker_compose("down" if down else "stop")
+        self.run_docker_compose("down")
         self.backup()
 
     def upgrade(self, force=False):
