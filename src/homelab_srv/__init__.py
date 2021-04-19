@@ -179,7 +179,7 @@ def run_docker(*args):
     return runez.run("docker", *args, stdout=None, stderr=None)
 
 
-def run_rsync(src, dest, sudo=False, env=None):
+def run_rsync(src, dest, sudo=False, env=None, exclude=None):
     cmd = []
     if sudo:
         cmd.append("sudo")
@@ -189,6 +189,11 @@ def run_rsync(src, dest, sudo=False, env=None):
     cmd.append("--delete")
     if env and "PUID" in env and "PGID" in env:
         cmd.append("--chown=%s:%s" % (env["PUID"], env["PGID"]))
+
+    if exclude:
+        for ex in exclude:
+            cmd.append("--exclude")
+            cmd.append(ex)
 
     need_trail = os.path.isdir(src)
     src = str(src)
@@ -361,6 +366,7 @@ class SYBackup(DCItem):
         super().__init__(parent)
         self.folder = self.cfg.get("folder", DEFAULT_BACKUP_FOLDER)
         self.per_host = runez.flattened(self.cfg.get("per_host"), keep_empty=None, split=" ")
+        self.exclude = self.cfg.get("exclude", {})
         self.restrict = self.cfg.get("restrict", {})
 
     def backup_destination(self, dc: "SYDC"):
@@ -372,6 +378,7 @@ class SYBackup(DCItem):
 
     def sanity_check(self):
         yield from self.dc_config.dc_name_check(self.per_host, "%s/per_host" % self)
+        yield from self.dc_config.dc_name_check(self.exclude, "%s/exclude" % self)
         yield from self.dc_config.dc_name_check(self.restrict, "%s/restrict" % self)
 
 
@@ -441,6 +448,8 @@ class SYDC(DCItem):
 
             return
 
+        exclude = self.parent.backup.exclude.get(self.dc_name)
+        exclude = runez.flattened(exclude, keep_empty=None, split=" ")
         configured = self.parent.backup.restrict.get(self.dc_name)
         configured = runez.flattened(configured, keep_empty=None, split=" ")
         if not configured:
@@ -453,13 +462,13 @@ class SYDC(DCItem):
             src = SRV_PERSIST / self.dc_name / rel_path
             dest = backup_dest / rel_path
             if invert:
-                env = None
+                env = exclude = None
                 src, dest = dest, src
 
             logging.debug("%s source: %s [exists: %s], dest: %s" % (action, src, src.exists(), dest))
             if runez.DRYRUN or src.exists():
                 if not auto or not dest.exists():
-                    run_rsync(src, dest, sudo=True, env=env)
+                    run_rsync(src, dest, sudo=True, env=env, exclude=exclude)
 
     def pull_images(self):
         """Using docker pull, apparently no way to see if docker-compose pull got a new image or not..."""

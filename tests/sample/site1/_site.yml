@@ -10,6 +10,8 @@ run:
 
 backup:
   folder: /srv/data/server-backup
+  exclude:
+    unifi-controller: log
   per_host:
     - pihole
   restrict:

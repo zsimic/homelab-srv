@@ -66,7 +66,7 @@ def test_sample(cli):
         assert cli.succeeded
         assert "ssh rps homelab-srv upgrade home-assistant --force" in cli.logged
 
-        cli.expect_success("-n ps", "Would run: ...ssh ... --color ps")
+        cli.expect_success("-n ps", "Would run:...ssh ... --color ps")
         cli.expect_success("-n -s:rps ps", "not running")
 
         cli.expect_success("-n -s:rps stop syncthing", "docker-compose... down")
@@ -76,7 +76,7 @@ def test_sample(cli):
         cli.expect_success("-n -s:rps upgrade syncthing", "docker-compose... up -d")
 
         cli.expect_success("-n backup", "ssh rps homelab-srv backup")
-        cli.expect_success("-n -s:rps backup", "chown=1001")
+        cli.expect_success("-n -s:rps backup", "chown=1001", "--exclude log")
         cli.expect_success("-n --debug -s:rps backup syncthing", "Not backing up 'syncthing': special container")
 
         cli.run("-n -s:rph backup pihole")
