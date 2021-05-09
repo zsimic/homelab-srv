@@ -10,6 +10,8 @@ Example:
 
 import logging
 import os
+import re
+from collections import defaultdict
 from pathlib import Path
 
 import click
@@ -164,7 +166,7 @@ def main(ctx, debug, simulate):
     if not GSRV.hostname:
         GSRV.hostname = get_hostname()
 
-    if ctx.invoked_subcommand != "meta":
+    if ctx.invoked_subcommand not in ("blocklist", "meta"):
         fatal = 0
         for item, msg in GSRV.bcfg.sanity_check():
             if "should" in msg or "would" in msg:
@@ -176,6 +178,73 @@ def main(ctx, debug, simulate):
 
         if fatal:
             runez.abort("Please fix reported issues first")
+
+
+RX_BLOCKLIST_LINE = re.compile(r"^([0-9:.]+\s+)?(.+)$")
+RX_IP = re.compile(r"^[0-9.]+$")
+RX_VALID_HOST_PART = re.compile(r"^(?!-)[A-Z\d-]{1,63}(?<!-)$", re.IGNORECASE)
+
+
+def is_valid_hostname(hostname):
+    if not hostname or len(hostname) > 255 or "." not in hostname:
+        return False
+
+    return all(RX_VALID_HOST_PART.match(x) for x in hostname.split("."))
+
+
+def analyze_blocklist(folder):
+    result = defaultdict(int)
+    ips = set()
+    invalid_hosts = set()
+    for fname in os.listdir(folder):
+        path = os.path.join(folder, fname)
+        with open(path) as fh:
+            lines = fh.readlines()
+            line_number = 0
+            for line in lines:
+                line_number += 1
+                line, _, _ = line.partition("#")
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+
+                m = RX_BLOCKLIST_LINE.match(line)
+                if not m:
+                    print("--> invalid line %s: %s" % (line_number, line))
+
+                hostnames = m.group(2).split(" ")
+                for hostname in hostnames:
+                    if hostname in ("local", "localhost"):
+                        continue
+
+                    if ":" in hostname or RX_IP.match(hostname):
+                        ips.add(hostname)
+                        continue
+
+                    if not is_valid_hostname(hostname):
+                        if "_" not in hostname:
+                            invalid_hosts.add(hostname)
+                            # print("--> invalid host line %s:%s: %s" % (path, line_number, hostname))
+
+                    result[hostname] += 1
+
+    multi = {k: v for k, v in result.items() if v > 1}
+    print("%s: %s hostnames, %s appear multiple times" % (folder, len(result), len(multi)))
+    return result
+
+
+@main.command()
+def blocklist():
+    ads = analyze_blocklist("_tmp/ads")
+    malicious = analyze_blocklist("_tmp/malicious")
+    sus = analyze_blocklist("_tmp/sus")
+    overall = defaultdict(int)
+    for d in (ads, malicious, sus):
+        for k, v in d.items():
+            overall[k] += v
+
+    multi = {k: v for k, v in overall.items() if v > 1}
+    print("\noverall: %s hostnames, %s appear multiple times" % (len(overall), len(multi)))
 
 
 @main.command()
