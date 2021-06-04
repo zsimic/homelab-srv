@@ -26,7 +26,7 @@ def test_edge_cases(temp_folder, logged):
 
 
 def from_sample(name, site=None):
-    path = runez.log.tests_path(name)
+    path = runez.SYS_INFO.tests_path(name)
     if site:
         path = os.path.join(path, site)
 
