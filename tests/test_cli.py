@@ -8,7 +8,7 @@ def test_sanity_check(cli):
 
 
 def test_bogus(cli):
-    with runez.CurrentFolder(runez.SYS_INFO.tests_path("bogus")):
+    with runez.CurrentFolder(runez.DEV.tests_path("bogus")):
         cli.expect_failure(
             "start foo",
             "has no docker-compose files",
@@ -19,7 +19,7 @@ def test_bogus(cli):
 
 
 def test_certbot(cli):
-    with runez.CurrentFolder(runez.SYS_INFO.tests_path("sample")):
+    with runez.CurrentFolder(runez.DEV.tests_path("sample")):
         cli.run("-n certbot example.com")
         assert cli.succeeded
         assert "pip install certbot certbot-dns-linode" in cli.logged
@@ -34,7 +34,7 @@ def test_certbot(cli):
 
 
 def test_sample(cli):
-    with runez.CurrentFolder(runez.SYS_INFO.tests_path("sample")):
+    with runez.CurrentFolder(runez.DEV.tests_path("sample")):
         cli.expect_success("-n meta set-folder", "No folder is currently configured")
 
         cli.expect_failure("-n meta set-folder foo", "does not exist")  # No folder
@@ -100,7 +100,7 @@ def test_sample(cli):
 
 
 def test_seed(cli):
-    site = runez.SYS_INFO.tests_path("sample")
+    site = runez.DEV.tests_path("sample")
     cli.run("-n -ssite1@%s seed ssh --key my-key foo@bar" % site)
     assert cli.failed
     assert "does not exist" in cli.logged

@@ -114,7 +114,7 @@ def base_from_spec(candidate, selected_site):
 
 
 def find_base_folder(path=None, site=None) -> (Path, str):
-    if not runez.SYS_INFO.current_test():  # pragma: no cover
+    if not runez.DEV.current_test():  # pragma: no cover
         if SRV_RUN.is_dir():
             return SRV_RUN, None, None
 
@@ -237,7 +237,7 @@ def analyze_blocklist(folder):
 @click.argument("spec", required=False)
 def blocklist(spec):
     if not spec:
-        spec = runez.SYS_INFO.project_path("curated-blocklist.yml")
+        spec = runez.DEV.project_path("curated-blocklist.yml")
 
     if not os.path.isfile(spec):
         runez.abort("")
