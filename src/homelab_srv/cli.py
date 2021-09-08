@@ -118,9 +118,8 @@ def find_base_folder(path=None, site=None) -> (Path, str):
         if SRV_RUN.is_dir():
             return SRV_RUN, None, None
 
-        configured = runez.readlines(CONFIG_PATH, default=None, first=1)
-        if configured and configured[0]:
-            path, site = base_from_spec(os.path.expanduser(configured[0]), site)
+        for line in runez.readlines(CONFIG_PATH, first=1):
+            path, site = base_from_spec(os.path.expanduser(line), site)
             if path:
                 return path, CONFIG_PATH, site
 
@@ -198,35 +197,31 @@ def analyze_blocklist(folder):
     invalid_hosts = set()
     for fname in os.listdir(folder):
         path = os.path.join(folder, fname)
-        with open(path) as fh:
-            lines = fh.readlines()
-            line_number = 0
-            for line in lines:
-                line_number += 1
-                line, _, _ = line.partition("#")
-                line = line.strip()
-                if not line or line.startswith("#"):
+        for line_number, line in enumerate(runez.readlines(path)):
+            line, _, _ = line.partition("#")
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+
+            m = RX_BLOCKLIST_LINE.match(line)
+            if not m:
+                print("--> invalid line %s: %s" % (line_number, line))
+
+            hostnames = m.group(2).split(" ")
+            for hostname in hostnames:
+                if hostname in ("local", "localhost"):
                     continue
 
-                m = RX_BLOCKLIST_LINE.match(line)
-                if not m:
-                    print("--> invalid line %s: %s" % (line_number, line))
+                if ":" in hostname or RX_IP.match(hostname):
+                    ips.add(hostname)
+                    continue
 
-                hostnames = m.group(2).split(" ")
-                for hostname in hostnames:
-                    if hostname in ("local", "localhost"):
-                        continue
+                if not is_valid_hostname(hostname):
+                    if "_" not in hostname:
+                        invalid_hosts.add(hostname)
+                        # print("--> invalid host line %s:%s: %s" % (path, line_number, hostname))
 
-                    if ":" in hostname or RX_IP.match(hostname):
-                        ips.add(hostname)
-                        continue
-
-                    if not is_valid_hostname(hostname):
-                        if "_" not in hostname:
-                            invalid_hosts.add(hostname)
-                            # print("--> invalid host line %s:%s: %s" % (path, line_number, hostname))
-
-                    result[hostname] += 1
+                result[hostname] += 1
 
     multi = {k: v for k, v in result.items() if v > 1}
     print("%s: %s hostnames, %s appear multiple times" % (folder, len(result), len(multi)))
