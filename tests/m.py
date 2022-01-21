@@ -21,12 +21,12 @@ HTML_HEAD = """
 <head>
 <meta charset="UTF-8">
 <style>
-body { width: 1000; }
+body { width: 700; }
 .dt { font-size: 10pt; color: darkgray; }
-.day { font-size: 11pt; color: darkgray; text-align: center; }
+.day { font-size: 11pt; margin: 5px; color: darkgray; text-align: center; }
 .number { font-size: 13pt; color: darkgray; }
-.other { text-align: left; }
-.mine { text-align: right; color: darkblue; }
+.other { text-align: left; margin: 0px; }
+.mine { text-align: right; margin: 0px; color: darkblue; }
 </style>
 </head>
 <body>
@@ -192,7 +192,7 @@ def mkdir(path):
 def b64_data(all_chats, path):
     if os.path.exists(path):
         tp = os.path.join(all_chats.tmp_path, "%s.png" % os.path.basename(path))
-        run_program("/usr/bin/qlmanage", "-t", "-o", all_chats.tmp_path, "-s", "600", path)
+        run_program("/usr/bin/qlmanage", "-t", "-o", all_chats.tmp_path, "-s", "500", path)
         if os.path.exists(tp):
             with open(tp, "rb") as fh:
                 data = fh.read()
@@ -205,7 +205,7 @@ def b64_data(all_chats, path):
 
 def b64_thumb(all_chats, attachment):
     mtype = attachment.mime_type
-    if mtype and mtype.startswith(("image", "video")):
+    if mtype and (mtype.startswith(("image", "video")) or "pdf" in mtype):
         ap = attachment.filename.replace("~/Library/Messages", all_chats.mpath)
         data = b64_data(all_chats, ap)
         if data:
@@ -245,8 +245,8 @@ class Recipient:
 
 class AddressBook:
 
-    def __init__(self):
-        self.path = self.find_ab()
+    def __init__(self, path):
+        self.path = self.find_ab(path)
         self.phone_map = {}
         if self.path:
             with open(os.path.expanduser(self.path)) as fh:
@@ -258,8 +258,8 @@ class AddressBook:
                         self.phone_map[t] = Recipient(t, name=n)
 
     @staticmethod
-    def find_ab():
-        paths = ["~/Dropbox/home/cc.ksv", "/tmp/.cc.ksv"]
+    def find_ab(path):
+        paths = [os.path.join(path, ".c"), "/tmp/.cc.ksv"]
         for path in paths:
             path = os.path.expanduser(path)
             if os.path.exists(path):
@@ -286,7 +286,7 @@ class AllChats:
         mkdir(self.mhpath)
         self.db = sqlite3.connect(os.path.join(self.mpath, "chat.db"))
         self.chats = {}
-        self.address_book = AddressBook()
+        self.address_book = AddressBook(self.ccpath)
         self.attachments = {}
         self.attachment_map = defaultdict(list)
         cur = self.db.cursor()
@@ -347,11 +347,14 @@ class AllChats:
         for sc in self.chats.values():
             sc.finalize()
 
-    def genhtml(self):
-        for sc in self.chats.values():
-            if not sc.messages:
-                continue
+    def genhtml(self, limit=None):
+        actual_chats = [sc for sc in self.chats.values() if sc.messages]
+        total = len(actual_chats)
+        for i, sc in enumerate(actual_chats):
+            if limit and i >= limit:
+                return
 
+            print("%s / %s" % (i + 1, total))
             recipients = []
             for hid in self.handle_map[sc.chat_info.ROWID]:
                 r = self.address_book.get_recipient(self.handles[hid].id)
@@ -378,8 +381,6 @@ class AllChats:
                     fh.write(msg.html_representation(self))
 
                 fh.write("</body></html>\n")
-                if "PYCHARM_HOSTED" in os.environ:
-                    return
 
     def as_text(self):
         result = []
@@ -416,6 +417,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("src")
     parser.add_argument("--genonly", action="store_true")
+    parser.add_argument("--limit", "-l", type=int)
     args = parser.parse_args()
     src = args.src
     if src and len(src) < 2:
@@ -429,19 +431,22 @@ def main():
     if not chats.msg_count:
         sys.exit(0)
 
-    chats.genhtml()
+    chats.genhtml(limit=args.limit)
     if not args.genonly:
         today = datetime.datetime.today()
         with open(chats.pivot_path, "wt") as fh:
             fh.write("%s %s %s\n" % (today.year, today.month, today.day))
 
-        tp = os.path.join(chats.mhpath, "all.txt")
+        tp = os.path.join(chats.mhpath, "_c.txt")
         with open(tp, "wt") as fh:
             fh.write(chats.as_text())
 
         os.chdir(chats.ccpath)
         tarp = "mh-%s.tar.gz" % today.strftime("%Y-%m-%d")
         run_program("/usr/bin/tar", "zcf", tarp, "mh")
+        user = os.environ.get("SUDO_USER" if os.geteuid() == 0 else "USER")
+        if user:
+            run_program("chown", user, tarp)
 
         shutil.rmtree(chats.mhpath)
         shutil.rmtree(chats.tmp_path)
