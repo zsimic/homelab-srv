@@ -76,11 +76,15 @@ class Model:
 class Attachment(Model):
     ROWID: int
     mime_type: str
+    filename: str
     _tct = """
 ROWID, guid, created_date, start_date, filename, uti, mime_type, transfer_state, is_outgoing, user_info, transfer_name, total_bytes,
 is_sticker, sticker_user_info, attribution_info, hide_attachment, ck_sync_state, ck_server_change_token_blob, ck_record_id, original_guid,
 sr_ck_sync_state, sr_ck_server_change_token_blob, sr_ck_record_id, is_commsafety_sensitive
 """
+
+    def __repr__(self):
+        return os.path.basename(getattr(self, "filename", "?"))
 
 
 class AttachmentJoin(Model):
@@ -205,7 +209,7 @@ def b64_data(all_chats, path):
 
 def b64_thumb(all_chats, attachment):
     mtype = attachment.mime_type
-    if mtype and (mtype.startswith(("image", "video")) or "pdf" in mtype):
+    if mtype and (mtype.startswith(("image", "video")) or "pdf" in mtype) and attachment.filename:
         ap = attachment.filename.replace("~/Library/Messages", all_chats.mpath)
         data = b64_data(all_chats, ap)
         if data:
@@ -339,9 +343,6 @@ class AllChats:
                     msg.attachments = self.attachment_map.get(msg.ROWID)
                     sc = self.chats[mid]
                     sc.add_message(msg)
-
-                # else:
-                #     print("--> missing mid %s: %s" % (mid, msg))
 
         print("%s msg" % self.msg_count)
         for sc in self.chats.values():
