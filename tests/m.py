@@ -33,6 +33,36 @@ body { width: 700; }
 """
 
 
+class Html:
+    def __init__(self, title=None):
+        self.title = title
+        self.messages = []
+
+    def add_msg(self, msg):
+        if isinstance(msg, list):
+            self.messages.extend(msg)
+
+        else:
+            self.messages.append(msg)
+
+    def save(self, path, all_chats=None):
+        with open(path, "wt") as fh:
+            fh.write("%s\n" % HTML_HEAD.strip())
+            if self.title:
+                fh.write("<h1>%s</h1>\n" % self.title)
+
+            ld = None
+            for msg in self.messages:
+                if ld != msg.day:
+                    ld = msg.day
+                    ts = msg.date.strftime("%a %Y-%m-%d")
+                    fh.write('<p class="day">%s</p>\n' % ts)
+
+                fh.write(msg.html_representation(all_chats))
+
+            fh.write("</body></html>\n")
+
+
 class Model:
     _tct: str
 
@@ -129,7 +159,7 @@ last_addressed_sim_id, is_blackholed, syndication_date, syndication_type
 
 class Message(Model):
     ROWID: int
-    attachments: list
+    attachments: list = None
     date: datetime.datetime
     text: str
     is_from_me: bool
@@ -163,7 +193,7 @@ synced_syndication_ranges
             cl = "other"
             tt = "%s %%s" % tt
 
-        if self.attachments:
+        if all_chats and self.attachments:
             text = []
             for a in self.attachments:
                 thumb = b64_thumb(all_chats, a)
@@ -365,23 +395,13 @@ class AllChats:
             names = ", ".join(r.name for r in recipients)
             numbers = ", ".join(r.phone_id for r in recipients)
             path = os.path.join(self.mhpath, fname)
-            with open(path, "wt") as fh:
-                fh.write("%s\n" % HTML_HEAD.strip())
-                header = "<h1>%s" % names
-                if any(r.has_name for r in recipients):
-                    header += ' <span class="number">%s</span>' % numbers
+            title = "<h1>%s" % names
+            if any(r.has_name for r in recipients):
+                title += ' <span class="number">%s</span>' % numbers
 
-                fh.write("%s</h1>\n" % header)
-                ld = None
-                for msg in sc.messages:
-                    if ld != msg.day:
-                        ld = msg.day
-                        ts = msg.date.strftime("%a %Y-%m-%d")
-                        fh.write('<p class="day">%s</p>\n' % ts)
-
-                    fh.write(msg.html_representation(self))
-
-                fh.write("</body></html>\n")
+            html = Html(title=title)
+            html.add_msg(sc.messages)
+            html.save(path, all_chats=self)
 
     def as_text(self):
         result = []
@@ -414,6 +434,52 @@ class AllChats:
         return "\n".join(result)
 
 
+def ibackup(path):
+    line_number = 0
+    current_msg = None
+    html = Html()
+    with open(path) as fh:
+        for line in fh:
+            line = line.strip()
+            line_number += 1
+            if (line_number <=1) or (not line and not current_msg):
+                continue
+
+            if len(line) > 30 and line.startswith('"'):
+                i = line.index('"', 1)
+                dt = line[1:i]
+                dt = datetime.datetime.strptime(dt, "%A, %b %d, %Y  %H:%M")
+                line = line[i + 2:]
+                sender, _, line = line.partition(",")
+                _, _, line = line.partition(",")
+                imsg, _, line = line.partition(",")
+                assert not imsg
+                if current_msg is None:
+                    current_msg = Message()
+
+                current_msg.date = dt
+                current_msg.day = (dt.year, dt.month, dt.day)
+                current_msg.is_from_me = sender == "+19253236663"
+                if line.startswith('"'):
+                    current_msg.text = line[1:]
+
+                else:
+                    current_msg.text = line
+                    html.add_msg(current_msg)
+                    current_msg = None
+
+            elif line.endswith('"'):
+                current_msg.text += "<br>\n%s" % line[:-1]
+                html.add_msg(current_msg)
+                current_msg = None
+
+            else:
+                current_msg.text += "<br>\n%s" % line
+
+    dest = "%s.html" % path[:-4]
+    html.save(dest)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("src")
@@ -421,6 +487,10 @@ def main():
     parser.add_argument("--limit", "-l", type=int)
     args = parser.parse_args()
     src = args.src
+    if src and src.endswith(".csv"):
+        ibackup(os.path.expanduser(src))
+        sys.exit(0)
+
     if src and len(src) < 2:
         base = "/Users"
         for x in os.listdir(base):
