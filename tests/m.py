@@ -440,41 +440,65 @@ def ibackup(path):
     html = Html()
     with open(path) as fh:
         for line in fh:
-            line = line.strip()
-            line_number += 1
-            if (line_number <=1) or (not line and not current_msg):
-                continue
+            try:
+                line = line.strip()
+                line_number += 1
+                if line_number == 23226:
+                    print()
+                if (line_number <= 1) or (not line and not current_msg):
+                    continue
 
-            if len(line) > 30 and line.startswith('"'):
-                i = line.index('"', 1)
-                dt = line[1:i]
-                dt = datetime.datetime.strptime(dt, "%A, %b %d, %Y  %H:%M")
-                line = line[i + 2:]
-                sender, _, line = line.partition(",")
-                _, _, line = line.partition(",")
-                imsg, _, line = line.partition(",")
-                assert not imsg
-                if current_msg is None:
-                    current_msg = Message()
+                dt = None
+                i = None
+                if len(line) > 30 and line.startswith('"'):
+                    try:
+                        i = line.index('",', 1)
+                        dt = line[1:i]
+                        dt = datetime.datetime.strptime(dt, "%A, %b %d, %Y  %H:%M")
 
-                current_msg.date = dt
-                current_msg.day = (dt.year, dt.month, dt.day)
-                current_msg.is_from_me = sender == "+19253236663"
-                if line.startswith('"'):
-                    current_msg.text = line[1:]
+                    except ValueError:
+                        dt = i = None
 
-                else:
-                    current_msg.text = line
+                if i is not None:
+                    line = line[i + 2:]
+                    sender, _, line = line.partition(",")
+                    _, _, line = line.partition(",")
+                    imsg, _, line = line.partition(",")
+                    if imsg and imsg != "Yes":
+                        print("check imsg line %s: %s" % (line_number, imsg))
+                        sys.exit(1)
+
+                    if current_msg is None:
+                        current_msg = Message()
+
+                    current_msg.date = dt
+                    current_msg.day = (dt.year, dt.month, dt.day)
+                    current_msg.is_from_me = not sender or ("+" not in sender) or ("19253236663" in sender)
+                    if line.startswith('"'):
+                        if len(line) > 1 and line.endswith('"'):
+                            current_msg.text = line[1:-1]
+                            html.add_msg(current_msg)
+                            current_msg = None
+
+                        else:
+                            current_msg.text = line[1:]
+
+                    else:
+                        current_msg.text = line
+                        html.add_msg(current_msg)
+                        current_msg = None
+
+                elif line.endswith('"'):
+                    current_msg.text += "<br>\n%s" % line[:-1]
                     html.add_msg(current_msg)
                     current_msg = None
 
-            elif line.endswith('"'):
-                current_msg.text += "<br>\n%s" % line[:-1]
-                html.add_msg(current_msg)
-                current_msg = None
+                else:
+                    current_msg.text += "<br>\n%s" % line
 
-            else:
-                current_msg.text += "<br>\n%s" % line
+            except Exception as e:
+                print("check line %s: %s" % (line_number, line))
+                raise
 
     dest = "%s.html" % path[:-4]
     html.save(dest)
