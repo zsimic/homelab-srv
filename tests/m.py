@@ -532,8 +532,17 @@ class Gpd:
                     t = t.strip()
                     self.known.append((c1, c2, tol, t))
 
+    def get_loc(self, c1, c2):
+        for k1, k2, kt, kn in self.known:
+            if abs(k1 - c1) < kt and abs(k2 - c2) < (kt / 5):
+                if kt < 0.1:
+                    return kn
+
+                return "%s (%s, %s)" % (kn, c1, c2)
+
     def pcoord(self, path):
         import exifread
+        res = []
         with open(path, "rb") as fh:
             tt = exifread.process_file(fh, details=False)
             c1 = tt.get("GPS GPSLatitude")
@@ -541,16 +550,13 @@ class Gpd:
             if c1 and c2:
                 c1 = dcoord(c1.values, tt["GPS GPSLatitudeRef"])
                 c2 = dcoord(c2.values, tt["GPS GPSLongitudeRef"])
-                for k1, k2, kt, kn in self.known:
-                    if abs(k1 - c1) < kt and abs(k2 - c2) < (kt / 5):
-                        if kt >= 0.1:
-                            return "%s (%s, %s)" % (kn, c1, c2)
+                res.append(self.get_loc(c1, c2))
 
-                        return kn
+            dt = tt.get("EXIF DateTimeOriginal") or tt.get("Image DateTime")
+            if dt:
+                res.append(dt.values)
 
-                return "%s, %s" % (c1, c2)
-
-        return "-"
+        return " ".join(res) or "-"
 
     def display_coords(self, path):
         path = os.path.expanduser(path)
