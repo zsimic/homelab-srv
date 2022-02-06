@@ -16,6 +16,7 @@ D0 = datetime.datetime(2001, 1, 1).timestamp() - 28800
 RX_TEL = re.compile(r"pref:(.+)")
 RX_TEL_CANONICAL = re.compile(r"[^\d]")
 RX_FNAME = re.compile(r"[^a-z0-9]+")
+CCPATH = os.path.expanduser("~/tmp/cc")
 HTML_HEAD = """
 <html>
 <head>
@@ -312,15 +313,14 @@ class AllChats:
 
     def __init__(self, mpath):
         self.mpath = os.path.expanduser(mpath)
-        self.ccpath = os.path.expanduser("~/tmp/cc")
-        self.mhpath = os.path.join(self.ccpath, "mh")
-        self.pivot_path = os.path.join(self.ccpath, ".p")
-        self.tmp_path = os.path.join(self.ccpath, "_tmp")
+        self.mhpath = os.path.join(CCPATH, "mh")
+        self.pivot_path = os.path.join(CCPATH, ".p")
+        self.tmp_path = os.path.join(CCPATH, "_tmp")
         mkdir(self.tmp_path)
         mkdir(self.mhpath)
         self.db = sqlite3.connect(os.path.join(self.mpath, "chat.db"))
         self.chats = {}
-        self.address_book = AddressBook(self.ccpath)
+        self.address_book = AddressBook(CCPATH)
         self.attachments = {}
         self.attachment_map = defaultdict(list)
         cur = self.db.cursor()
@@ -512,33 +512,52 @@ def dcoord(coords, ref):
     return dd
 
 
-def pcoord(path):
-    import exifread
-    with open(path, "rb") as fh:
-        tt = exifread.process_file(fh, details=False)
-        xcc1 = tt.get("GPS GPSLatitude")
-        xcc2 = tt.get("GPS GPSLongitude")
-        if xcc1 and xcc2:
-            zcc1 = dcoord(xcc1.values, tt["GPS GPSLatitudeRef"])
-            zcc2 = dcoord(xcc2.values, tt["GPS GPSLongitudeRef"])
-            return "%s, %s" % (zcc1, zcc2)
+class Gpd:
+    def __init__(self):
+        self.kpath = os.path.join(CCPATH, ".g")
+        self.known = []
+        self.tolerance = 0.001
+        with open(self.kpath) as fh:
+            for line in fh:
+                line = line.strip()
+                if line:
+                    c1, _, t = line.partition(" ")
+                    c1 = float(c1.strip(","))
+                    c2, _, t = t.partition(" ")
+                    c2 = float(c2)
+                    t = t.strip()
+                    self.known.append((c1, c2, t))
 
-    return "-"
+    def pcoord(self, path):
+        import exifread
+        with open(path, "rb") as fh:
+            tt = exifread.process_file(fh, details=False)
+            c1 = tt.get("GPS GPSLatitude")
+            c2 = tt.get("GPS GPSLongitude")
+            if c1 and c2:
+                c1 = dcoord(c1.values, tt["GPS GPSLatitudeRef"])
+                c2 = dcoord(c2.values, tt["GPS GPSLongitudeRef"])
+                for k1, k2, kn in self.known:
+                    if abs(k1 - c1) < self.tolerance and abs(k2 - c2) < self.tolerance:
+                        return kn
 
+                return "%s, %s" % (c1, c2)
 
-def gcoords(path):
-    path = os.path.expanduser(path)
-    if not os.path.isdir(path):
-        print(pcoord(path))
-        return
+        return "-"
 
-    for fname in os.listdir(path):
-        _, _, ext = fname.rpartition(".")
-        ext = ext.lower()
-        if ext in "jpg jpeg png heic":
-            fp = os.path.join(path, fname)
-            if not os.path.isdir(fp):
-                print("%s: %s" % (fname, pcoord(fp)))
+    def display_coords(self, path):
+        path = os.path.expanduser(path)
+        if not os.path.isdir(path):
+            print(self.pcoord(path))
+            return
+
+        for fname in os.listdir(path):
+            _, _, ext = fname.rpartition(".")
+            ext = ext.lower()
+            if ext in "jpg jpeg png heic":
+                fp = os.path.join(path, fname)
+                if not os.path.isdir(fp):
+                    print("%s: %s" % (fname, self.pcoord(fp)))
 
 
 def main():
@@ -553,8 +572,8 @@ def main():
         sys.exit(0)
 
     if src and src.startswith("g:"):
-        src = src[2:]
-        gcoords(src)
+        gpd = Gpd()
+        gpd.display_coords(src[2:])
         sys.exit(0)
 
     if src and len(src) < 2:
@@ -578,7 +597,7 @@ def main():
         with open(tp, "wt") as fh:
             fh.write(chats.as_text())
 
-        os.chdir(chats.ccpath)
+        os.chdir(CCPATH)
         tarp = "mh-%s.tar.gz" % today.strftime("%Y-%m-%d")
         run_program("/usr/bin/tar", "zcf", tarp, "mh")
         user = os.environ.get("SUDO_USER" if os.geteuid() == 0 else "USER")
