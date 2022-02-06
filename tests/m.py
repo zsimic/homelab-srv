@@ -504,6 +504,48 @@ def ibackup(path):
     html.save(dest)
 
 
+def dcoord(coords, ref):
+    dd = coords[0] + coords[1] / 60 + coords[2] / 3600
+    if ref in "SW":
+        dd = -dd
+
+    return dd
+
+
+def pcoord(path):
+    from exif import Image
+    try:
+        with open(path, "rb") as fh:
+            img = Image(fh)
+            if img.has_exif:
+                cc1 = dcoord(img.gps_latititude, img.gps_latitude_ref)
+                cc2 = dcoord(img.gps_longitude, img.gps_longitude_ref)
+                return "%s, %s" % (cc1, cc2)
+
+    except Exception as e:
+        mm = str(e)
+        if isinstance(e, AttributeError) or "UnpackError" in mm or "ValueError" in mm:
+            return None
+
+        raise
+
+
+def gcoords(path):
+    path = os.path.expanduser(path)
+    if os.path.isdir(path):
+        for fname in os.listdir(path):
+            _, _, ext = fname.rpartition(".")
+            ext = ext.lower()
+            if ext in "jpg jpeg png":
+                fp = os.path.join(path, fname)
+                if not os.path.isdir(fp):
+                    print("%s: %s" % (fname, pcoord(fp)))
+
+        return
+
+    print(pcoord(path))
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("src")
@@ -513,6 +555,11 @@ def main():
     src = args.src
     if src and src.endswith(".csv"):
         ibackup(os.path.expanduser(src))
+        sys.exit(0)
+
+    if src and src.startswith("g:"):
+        src = src[2:]
+        gcoords(src)
         sys.exit(0)
 
     if src and len(src) < 2:
