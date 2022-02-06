@@ -516,7 +516,6 @@ class Gpd:
     def __init__(self):
         self.kpath = os.path.join(CCPATH, ".g")
         self.known = []
-        self.tolerance = 0.001
         with open(self.kpath) as fh:
             for line in fh:
                 line = line.strip()
@@ -525,8 +524,13 @@ class Gpd:
                     c1 = float(c1.strip(","))
                     c2, _, t = t.partition(" ")
                     c2 = float(c2)
+                    tol = 0.01
+                    if t[0] in "t" and t[1] == " ":
+                        tol = 0.5
+                        _, _, t = t.partition(" ")
+
                     t = t.strip()
-                    self.known.append((c1, c2, t))
+                    self.known.append((c1, c2, tol, t))
 
     def pcoord(self, path):
         import exifread
@@ -537,8 +541,11 @@ class Gpd:
             if c1 and c2:
                 c1 = dcoord(c1.values, tt["GPS GPSLatitudeRef"])
                 c2 = dcoord(c2.values, tt["GPS GPSLongitudeRef"])
-                for k1, k2, kn in self.known:
-                    if abs(k1 - c1) < self.tolerance and abs(k2 - c2) < self.tolerance:
+                for k1, k2, kt, kn in self.known:
+                    if abs(k1 - c1) < kt and abs(k2 - c2) < (kt / 5):
+                        if kt >= 0.1:
+                            return "%s (%s, %s)" % (kn, c1, c2)
+
                         return kn
 
                 return "%s, %s" % (c1, c2)
@@ -554,7 +561,7 @@ class Gpd:
         for fname in os.listdir(path):
             _, _, ext = fname.rpartition(".")
             ext = ext.lower()
-            if ext in "jpg jpeg png heic":
+            if ext in "heic jpg jpeg mov png":
                 fp = os.path.join(path, fname)
                 if not os.path.isdir(fp):
                     print("%s: %s" % (fname, self.pcoord(fp)))
