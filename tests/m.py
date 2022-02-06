@@ -505,45 +505,40 @@ def ibackup(path):
 
 
 def dcoord(coords, ref):
-    dd = coords[0] + coords[1] / 60 + coords[2] / 3600
-    if ref in "SW":
+    dd = coords[0].decimal() + coords[1].decimal() / 60 + coords[2].decimal() / 3600
+    if ref.values in "SW":
         dd = -dd
 
     return dd
 
 
 def pcoord(path):
-    from exif import Image
-    try:
-        with open(path, "rb") as fh:
-            img = Image(fh)
-            if img.has_exif:
-                cc1 = dcoord(img.gps_latititude, img.gps_latitude_ref)
-                cc2 = dcoord(img.gps_longitude, img.gps_longitude_ref)
-                return "%s, %s" % (cc1, cc2)
+    import exifread
+    with open(path, "rb") as fh:
+        tt = exifread.process_file(fh, details=False)
+        xcc1 = tt.get("GPS GPSLatitude")
+        xcc2 = tt.get("GPS GPSLongitude")
+        if xcc1 and xcc2:
+            zcc1 = dcoord(xcc1.values, tt["GPS GPSLatitudeRef"])
+            zcc2 = dcoord(xcc2.values, tt["GPS GPSLongitudeRef"])
+            return "%s, %s" % (zcc1, zcc2)
 
-    except Exception as e:
-        mm = str(e)
-        if isinstance(e, AttributeError) or "UnpackError" in mm or "ValueError" in mm:
-            return None
-
-        raise
+    return "-"
 
 
 def gcoords(path):
     path = os.path.expanduser(path)
-    if os.path.isdir(path):
-        for fname in os.listdir(path):
-            _, _, ext = fname.rpartition(".")
-            ext = ext.lower()
-            if ext in "jpg jpeg png":
-                fp = os.path.join(path, fname)
-                if not os.path.isdir(fp):
-                    print("%s: %s" % (fname, pcoord(fp)))
-
+    if not os.path.isdir(path):
+        print(pcoord(path))
         return
 
-    print(pcoord(path))
+    for fname in os.listdir(path):
+        _, _, ext = fname.rpartition(".")
+        ext = ext.lower()
+        if ext in "jpg jpeg png heic":
+            fp = os.path.join(path, fname)
+            if not os.path.isdir(fp):
+                print("%s: %s" % (fname, pcoord(fp)))
 
 
 def main():
