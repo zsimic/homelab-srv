@@ -538,7 +538,7 @@ class Gpd:
                 tol = 0.5
 
             elif kt == "h":
-                tol = 0.001
+                tol = 0.005
 
             if abs(k1 - c1) < tol and abs(k2 - c2) < (tol / 5):
                 if kt != "h":
