@@ -524,21 +524,29 @@ class Gpd:
                     c1 = float(c1.strip(","))
                     c2, _, t = t.partition(" ")
                     c2 = float(c2)
-                    tol = 0.01
-                    if t[0] in "t" and t[1] == " ":
-                        tol = 0.5
-                        _, _, t = t.partition(" ")
+                    kt = None
+                    if t[0] in "th" and t[1] == " ":
+                        kt = t[0]
+                        t = t[2:]
 
-                    t = t.strip()
-                    self.known.append((c1, c2, tol, t))
+                    self.known.append((c1, c2, kt, t.strip()))
 
     def get_loc(self, c1, c2):
         for k1, k2, kt, kn in self.known:
-            if abs(k1 - c1) < kt and abs(k2 - c2) < (kt / 5):
-                if kt < 0.1:
-                    return kn
+            tol = 0.01
+            if kt == "t":
+                tol = 0.5
 
-                return "%s (%s, %s)" % (kn, c1, c2)
+            elif kt == "h":
+                tol = 0.001
+
+            if abs(k1 - c1) < tol and abs(k2 - c2) < (tol / 5):
+                if kt != "h":
+                    return "%s (%s, %s)" % (kn, c1, c2)
+
+                return kn
+
+        return "%s, %s" % (c1, c2)
 
     def pcoord(self, path):
         import exifread
