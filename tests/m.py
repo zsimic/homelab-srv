@@ -46,8 +46,15 @@ class Html:
         else:
             self.messages.append(msg)
 
-    def save(self, path, all_chats=None):
-        with open(path, "wt") as fh:
+    def save(self, path, all_chats=None, mode="wt"):
+        if mode == "at" and os.path.exists(path):
+            print("--> Appending to %s" % path)
+
+        folder = os.path.dirname(path)
+        if not os.path.isdir(folder):
+            os.makedirs(folder)
+
+        with open(path, mode) as fh:
             fh.write("%s\n" % HTML_HEAD.strip())
             if self.title:
                 fh.write("<h1>%s</h1>\n" % self.title)
@@ -264,7 +271,8 @@ class SingleChat:
 
 class Recipient:
 
-    def __init__(self, phone_id, name=None):
+    def __init__(self, phone_id, name=None, category=None):
+        self.category = category
         self.phone_id = phone_id
         self.has_name = bool(name)
         self.id = phone_id.strip("+").lstrip("1")
@@ -277,6 +285,24 @@ class Recipient:
 
         return self.id
 
+    @classmethod
+    def canonical_nb(cls, text):
+        if "@" in text:
+            return text
+
+        nb = RX_TEL_CANONICAL.sub("", text)
+        if not nb or not (10 <= len(nb) <= 12):
+            # print("--> %s" % nb)
+            return None
+
+        if not nb.startswith("+"):
+            if len(nb) == 10 and nb[0] != 1:
+                nb = "1%s" % nb
+
+            nb = "+%s" % nb
+
+        return nb
+
 
 class AddressBook:
 
@@ -287,10 +313,13 @@ class AddressBook:
             with open(os.path.expanduser(self.path)) as fh:
                 for line in fh:
                     t, _, n = line.partition(" ")
+                    category, _, n = n.partition(" ")
                     t = t.strip()
+                    category = category.strip()
+                    assert category in "FGKMUXZ"
                     n = n.strip()
                     if t and n:
-                        self.phone_map[t] = Recipient(t, name=n)
+                        self.phone_map[t] = Recipient(t, name=n, category=category)
 
     @staticmethod
     def find_ab(path):
@@ -392,6 +421,8 @@ class AllChats:
                 recipients.append(r)
 
             fname = "%s.html" % "-".join(r.fname for r in recipients)
+            cat = sorted(set([r.category for r in recipients if r.category])) or ["_"]
+            fname = os.path.join("".join(cat), fname)
             names = ", ".join(r.name for r in recipients)
             numbers = ", ".join(r.phone_id for r in recipients)
             path = os.path.join(self.mhpath, fname)
@@ -434,74 +465,147 @@ class AllChats:
         return "\n".join(result)
 
 
-def ibackup(path):
-    line_number = 0
-    current_msg = None
-    html = Html()
-    with open(path) as fh:
-        for line in fh:
-            try:
-                line = line.strip()
-                line_number += 1
-                if line_number == 23226:
-                    print()
-                if (line_number <= 1) or (not line and not current_msg):
+class IBChats:
+    def __init__(self, path):
+        self.path = os.path.expanduser(path)
+        self.address_book = AddressBook(CCPATH)
+        self.mine = "19253236663"
+        self.target_folder = os.path.join(os.path.dirname(path), "sms")
+        self.current_msg = None
+        self.current_msgs = []
+        self.current_senders = []
+        self.line_number = 0
+        self.empty_lines = 0
+        self.prev_line = None
+
+    def canonical_senders(self):
+        res = []
+        for name in self.current_senders:
+            if len(name) <= 6 or "@" in name:
+                res.append(Recipient(name))
+                continue
+
+            if "(" in name:
+                m = re.match(r"^.*?\((.+)\)$", name)
+                if m:
+                    r = self.address_book.get_recipient(m.group(1))
+                    if r:
+                        res.append(r)
+                        continue
+
+            m = re.match(r"^.*?([\+1]\d+).*?$", name)
+            if m:
+                r = self.address_book.get_recipient(m.group(1))
+                if r:
+                    res.append(r)
                     continue
 
-                dt = None
-                i = None
-                if len(line) > 30 and line.startswith('"'):
-                    try:
-                        i = line.index('",', 1)
-                        dt = line[1:i]
-                        dt = datetime.datetime.strptime(dt, "%A, %b %d, %Y  %H:%M")
+            res.append(Recipient(name))
 
-                    except ValueError:
-                        dt = i = None
+        return res
 
-                if i is not None:
-                    line = line[i + 2:]
-                    sender, _, line = line.partition(",")
-                    _, _, line = line.partition(",")
-                    imsg, _, line = line.partition(",")
-                    if imsg and imsg != "Yes":
-                        print("check imsg line %s: %s" % (line_number, imsg))
-                        sys.exit(1)
+    def get_dt(self, line):
+        dt = None
+        i = None
+        if line and len(line) > 30 and line.startswith('"'):
+            try:
+                i = line.index('",', 1)
+                dt = line[1:i]
+                dt = datetime.datetime.strptime(dt, "%A, %b %d, %Y  %H:%M")
 
-                    if current_msg is None:
-                        current_msg = Message()
+            except ValueError:
+                dt = i = None
 
-                    current_msg.date = dt
-                    current_msg.day = (dt.year, dt.month, dt.day)
-                    current_msg.is_from_me = not sender or ("+" not in sender) or ("19253236663" in sender)
-                    if line.startswith('"'):
-                        if len(line) > 1 and line.endswith('"'):
-                            current_msg.text = line[1:-1]
-                            html.add_msg(current_msg)
-                            current_msg = None
+        return dt, i
 
-                        else:
-                            current_msg.text = line[1:]
+    def wrapup_current_msgs(self):
+        self.wrapup_current_msg()
+        if self.current_msgs:
+            html = Html()
+            for msg in self.current_msgs:
+                html.add_msg(msg)
 
-                    else:
-                        current_msg.text = line
-                        html.add_msg(current_msg)
-                        current_msg = None
+            cs = self.canonical_senders()
+            dest = "-".join([x.fname for x in cs])
+            dest = "%s.html" % dest
+            cat = sorted(set([r.category for r in cs if r.category])) or ["_"]
+            dest = os.path.join("".join(cat), dest)
+            dest = os.path.join(self.target_folder, dest)
+            html.save(dest, mode="at")
+            self.current_msgs = []
+            self.current_senders = []
 
-                elif line.endswith('"'):
-                    current_msg.text += "<br>\n%s" % line[:-1]
-                    html.add_msg(current_msg)
-                    current_msg = None
+    def wrapup_prev_line(self):
+        if self.prev_line is not None:
+            if self.current_msg.text:
+                self.current_msg.text += "<br>\n"
+
+            self.current_msg.text += self.prev_line
+            self.prev_line = None
+
+    def wrapup_current_msg(self):
+        self.wrapup_prev_line()
+        if self.current_msg:
+            if self.current_msg.text.endswith("<br>\n<br>\n"):
+                self.current_msg.text = self.current_msg.text[:-10]
+
+            self.current_msgs.append(self.current_msg)
+            self.current_msg = None
+
+    def process_line(self, line):
+        self.wrapup_prev_line()
+        if not line:
+            self.prev_line = line
+            self.empty_lines += 1
+            return
+
+        dt, i = self.get_dt(line)
+        if dt:
+            self.wrapup_current_msg()
+            if self.empty_lines == 2:
+                self.wrapup_current_msgs()
+
+            line = line[i + 2:]
+            sender, _, line = line.partition(",")
+            is_from_me = not sender or ("()" in sender) or (self.mine in sender)
+            if not is_from_me and sender not in self.current_senders:
+                self.current_senders.append(sender)
+
+            _, _, line = line.partition(",")
+            imsg, _, line = line.partition(",")
+            if imsg and imsg != "Yes":
+                print("check imsg line %s: %s" % (self.line_number, imsg))
+                sys.exit(1)
+
+            if self.current_msg is None:
+                self.current_msg = Message()
+                self.current_msg.text = ""
+
+            self.current_msg.date = dt
+            self.current_msg.day = (dt.year, dt.month, dt.day)
+            self.current_msg.is_from_me = is_from_me
+            if line.startswith('"'):
+                if len(line) > 1 and line.endswith('"'):
+                    line = line[1:-1]
 
                 else:
-                    current_msg.text += "<br>\n%s" % line
+                    line = line[1:]
 
-            except Exception as e:
-                print("check line %s: %s" % (line_number, line))
-                raise
+        self.empty_lines = 0
+        self.prev_line = line
 
-    dest = "%s.html" % path[:-4]
-    html.save(dest)
+    def process(self):
+        self.line_number = 0
+        with open(self.path) as fh:
+            for line in fh:
+                self.line_number += 1
+                if self.line_number == 171404:
+                    print()
+                line = line.rstrip("\n")
+                if self.line_number > 1:
+                    self.process_line(line)
+
+        self.wrapup_current_msgs()
 
 
 def dcoord(coords, ref):
@@ -581,6 +685,65 @@ class Gpd:
                     print("%s: %s" % (fname, self.pcoord(fp)))
 
 
+def sort_photos(path):
+    import shutil
+    path = os.path.expanduser(path)
+    num = 0
+    for fname in os.listdir(path):
+        fp = os.path.join(path, fname)
+        if os.path.isfile(fp):
+            num += 1
+            x = os.stat(fp)
+            dt = datetime.datetime.fromtimestamp(x.st_mtime)
+            folder = os.path.join(path, "%04i/%02i" % (dt.year, dt.month))
+            if not os.path.isdir(folder):
+                os.makedirs(folder)
+
+            shutil.move(fp, os.path.join(folder, fname))
+            if num % 500 == 0:
+                print(num)
+
+
+def check_vcf(path):
+    address_book = AddressBook(CCPATH)
+    path = os.path.expanduser(path)
+    for fname in os.listdir(path):
+        if fname.endswith(".vcf"):
+            fp = os.path.join(path, fname)
+            name = org = None
+            phone_ids = []
+            with open(fp) as fh:
+                for line in fh:
+                    line = line.strip()
+                    if line.startswith("ORG:"):
+                        org = line[4:]
+
+                    elif line.startswith("FN:"):
+                        name = line[3:]
+
+                    elif (line.startswith("TEL;") or line.startswith("EMAIL;")) and ("type=pref:" in line.lower()):
+                        i = line.lower().index("type=pref:")
+                        tel = Recipient.canonical_nb(line[i + 10:])
+                        if tel and tel not in phone_ids:
+                            phone_ids.append(tel)
+
+                    elif "tel:" in line.lower():
+                        i = line.lower().index("tel:")
+                        tel = Recipient.canonical_nb(line[i + 4:])
+                        if tel and tel not in phone_ids:
+                            phone_ids.append(tel)
+
+            if phone_ids:
+                assert name
+                if org and org not in name:
+                    name = "%s %s" % (name, org)
+
+                for phone_id in phone_ids:
+                    if phone_id and phone_id not in address_book.phone_map:
+                        if phone_id not in (name, "+%s" % name):
+                            print("%s %s" % (phone_id, name))
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("src")
@@ -589,12 +752,21 @@ def main():
     args = parser.parse_args()
     src = args.src
     if src and src.endswith(".csv"):
-        ibackup(os.path.expanduser(src))
+        ib = IBChats(src)
+        ib.process()
         sys.exit(0)
 
     if src and src.startswith("g:"):
         gpd = Gpd()
         gpd.display_coords(src[2:])
+        sys.exit(0)
+
+    if src and src.startswith("s:"):
+        sort_photos(src[2:])
+        sys.exit(0)
+
+    if src and src.startswith("c:"):
+        check_vcf(src[2:])
         sys.exit(0)
 
     if src and len(src) < 2:
