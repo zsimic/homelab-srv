@@ -3,7 +3,9 @@
 import argparse
 import base64
 import datetime
+import filecmp
 import os
+import pathlib
 import re
 import shutil
 import sqlite3
@@ -23,11 +25,11 @@ HTML_HEAD = """
 <meta charset="UTF-8">
 <style>
 body { width: 700; }
-.dt { font-size: 10pt; color: darkgray; }
-.day { font-size: 11pt; margin: 5px; color: darkgray; text-align: center; }
 .number { font-size: 13pt; color: darkgray; }
-.other { text-align: left; margin: 0px; }
-.mine { text-align: right; margin: 0px; color: darkblue; }
+.dt { font-size: 10pt; color: darkgray; margin: 0px; }
+.day { font-size: 11pt; color: darkgray; margin: 5px; text-align: center; }
+.other { font-size: 11pt; color: black; margin: 0px; text-align: left; }
+.mine { font-size: 11pt; color: darkblue; margin: 0px; text-align: right; }
 </style>
 </head>
 <body>
@@ -46,6 +48,24 @@ class Html:
         else:
             self.messages.append(msg)
 
+    def rendered(self, all_chats=None):
+        res = []
+        res.append("%s\n" % HTML_HEAD.strip())
+        if self.title:
+            res.append("<h1>%s</h1>\n" % self.title)
+
+        ld = None
+        for msg in self.messages:
+            if ld != msg.day:
+                ld = msg.day
+                ts = msg.date.strftime("%a %Y-%m-%d")
+                res.append('<p class="day">%s</p>\n' % ts)
+
+            res.append(msg.html_representation(all_chats))
+
+        res.append("</body></html>\n")
+        return "".join(res)
+
     def save(self, path, all_chats=None, mode="wt"):
         if mode == "at" and os.path.exists(path):
             print("--> Appending to %s" % path)
@@ -55,20 +75,7 @@ class Html:
             os.makedirs(folder)
 
         with open(path, mode) as fh:
-            fh.write("%s\n" % HTML_HEAD.strip())
-            if self.title:
-                fh.write("<h1>%s</h1>\n" % self.title)
-
-            ld = None
-            for msg in self.messages:
-                if ld != msg.day:
-                    ld = msg.day
-                    ts = msg.date.strftime("%a %Y-%m-%d")
-                    fh.write('<p class="day">%s</p>\n' % ts)
-
-                fh.write(msg.html_representation(all_chats))
-
-            fh.write("</body></html>\n")
+            fh.write(self.rendered(all_chats=all_chats))
 
 
 class Model:
@@ -526,12 +533,17 @@ class IBChats:
                 html.add_msg(msg)
 
             cs = self.canonical_senders()
-            dest = "-".join([x.fname for x in cs])
-            dest = "%s.html" % dest
-            cat = sorted(set([r.category for r in cs if r.category])) or ["_"]
-            dest = os.path.join("".join(cat), dest)
-            dest = os.path.join(self.target_folder, dest)
-            html.save(dest, mode="at")
+            if cs:
+                dest = "-".join([x.fname for x in cs])
+                dest = "%s.html" % dest
+                cat = sorted(set([r.category for r in cs if r.category])) or ["_"]
+                dest = os.path.join("".join(cat), dest)
+                dest = os.path.join(self.target_folder, dest)
+                html.save(dest, mode="at")
+
+            else:
+                print(html.rendered())
+
             self.current_msgs = []
             self.current_senders = []
 
@@ -545,9 +557,12 @@ class IBChats:
 
     def wrapup_current_msg(self):
         self.wrapup_prev_line()
-        if self.current_msg:
+        if self.current_msg and self.current_msg.text is not None:
             if self.current_msg.text.endswith("<br>\n<br>\n"):
                 self.current_msg.text = self.current_msg.text[:-10]
+
+            if self.current_msg.text.endswith("<br>\n"):
+                self.current_msg.text = self.current_msg.text[:-5]
 
             self.current_msgs.append(self.current_msg)
             self.current_msg = None
@@ -594,7 +609,7 @@ class IBChats:
         self.empty_lines = 0
         self.prev_line = line
 
-    def process(self):
+    def process_csv(self):
         self.line_number = 0
         with open(self.path) as fh:
             for line in fh:
@@ -604,6 +619,56 @@ class IBChats:
                 line = line.rstrip("\n")
                 if self.line_number > 1:
                     self.process_line(line)
+
+        self.wrapup_current_msgs()
+
+    def process_txt(self):
+        self.line_number = 0
+        cday = None
+        rd = re.compile(r"^--- (.+) ---$")
+        rt = re.compile(r"^\* (.+) +- (.+)$")
+        with open(self.path) as fh:
+            for line in fh:
+                self.line_number += 1
+                m = rd.match(line)
+                if m:
+                    self.wrapup_current_msg()
+                    cday = datetime.datetime.strptime(m.group(1), "%b %d, %Y")
+                    continue
+
+                m = rt.match(line)
+                if m:
+                    self.wrapup_current_msg()
+                    self.current_msg = Message()
+                    self.current_msg.text = None
+                    self.current_msg.is_from_me = m.group(1).strip() == "Me"
+                    dtt = m.group(2)
+                    dt = datetime.datetime.strptime(dtt, "%H:%M:%S %p")
+                    hh = dt.hour
+                    if hh == 12:
+                        if dtt.endswith("AM"):
+                            hh = 0
+
+                    elif dtt.endswith("PM"):
+                        hh += 12
+
+                    dt = datetime.datetime(cday.year, cday.month, cday.day, hh, dt.minute, dt.second)
+                    self.current_msg.date = dt
+                    self.current_msg._on_load()
+                    continue
+
+                if self.current_msg:
+                    if line.startswith(" -") and self.current_msg.text is None:
+                        self.current_msg.text = line[2:].strip()
+                        continue
+
+                    line = line.rstrip()
+                    if self.current_msg.text is not None:
+                        if self.current_msg.text:
+                            self.current_msg.text += "<br>\n%s" % line
+
+                        else:
+                            self.current_msg.text = line
 
         self.wrapup_current_msgs()
 
@@ -686,7 +751,6 @@ class Gpd:
 
 
 def sort_photos(path):
-    import shutil
     path = os.path.expanduser(path)
     num = 0
     for fname in os.listdir(path):
@@ -744,6 +808,93 @@ def check_vcf(path):
                             print("%s %s" % (phone_id, name))
 
 
+def scan_pics(src, ignore=None):
+    for subfile in src.iterdir():
+        name = subfile.name
+        if name and not name[0] in "._" and ignore and name not in ignore:
+            if subfile.is_dir():
+                yield from scan_pics(subfile, ignore=ignore)
+
+            elif subfile.suffix.lower() in ".3gp .avi .gif .heic .jpg .jpeg .mov .mp4 .png .tif":
+                yield subfile
+
+            else:
+                print("--> %s" % subfile)
+
+
+def reorg_pics(path):
+    path = os.path.expanduser(path)
+    path = pathlib.Path(path)
+    count = 0
+    moved = 0
+    skipped = 0
+    same = 0
+    import exifread
+    import imghdr
+    for item in scan_pics(path, ignore=("todo", )):
+        if item.suffix.lower() in ".3gp .avi .mov .mp4":
+            continue
+
+        if item.suffix.lower() in ".heic":
+            with open(item, "rb") as fh:
+                tt = exifread.process_file(fh, details=False)
+                if not tt:
+                    print("--> check %s" % item)
+
+            continue
+
+        x = imghdr.what(item)
+        if not x or x not in 'gif jpeg png tiff':
+            print("--> check %s %s" % (x, item))
+
+    for item in scan_pics(path / "todo", ignore=("PaxHeader", )):
+        count += 1
+        ss = item.stat()
+        dd = min(ss.st_mtime, ss.st_ctime)
+        dd = datetime.datetime.fromtimestamp(dd)
+        relative_path = "%s/%s" % (dd.strftime("%Y/%m"), item.name)
+        x = relative_path.split("/")
+        assert len(x) == 3
+        if not re.match(r"\d+/\d\d/[\w #-]+\.\w+", relative_path):
+            print("--> invalid path %s [%s]" % (relative_path, item))
+            continue
+            # sys.exit(1)
+
+        dest = path / relative_path
+        if item != dest:
+            if dest.exists():
+                if filecmp.cmp(item, dest):
+                    same += 1
+                    print("--> removed %s" % item)
+                    os.remove(item)
+                    continue
+
+                relative_path = "%s/x-%s" % (dd.strftime("%Y/%m"), item.name)
+                dest2 = path / relative_path
+                if dest2.exists():
+                    if filecmp.cmp(item, dest2):
+                        same += 1
+                        print("--> removed-x %s" % item)
+                        os.remove(item)
+                        continue
+
+                    skipped += 1
+                    print("--> diff: %s - %s" % (item, dest))
+                    continue
+
+                else:
+                    dest = dest2
+
+            if not dest.parent.is_dir():
+                os.makedirs(dest.parent)
+
+            moved += 1
+            print("Moved %s" % relative_path)
+            shutil.move(item, dest)
+
+    print("Moved %s / %s pics (%s skipped, %s same)" % (moved, count, skipped, same))
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("src")
@@ -753,7 +904,12 @@ def main():
     src = args.src
     if src and src.endswith(".csv"):
         ib = IBChats(src)
-        ib.process()
+        ib.process_csv()
+        sys.exit(0)
+
+    if src and src.endswith(".txt"):
+        ib = IBChats(src)
+        ib.process_txt()
         sys.exit(0)
 
     if src and src.startswith("g:"):
@@ -767,6 +923,10 @@ def main():
 
     if src and src.startswith("c:"):
         check_vcf(src[2:])
+        sys.exit(0)
+
+    if src and src.startswith("p:"):
+        reorg_pics(src[2:])
         sys.exit(0)
 
     if src and len(src) < 2:
