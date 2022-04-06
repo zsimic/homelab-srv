@@ -292,6 +292,12 @@ class Recipient:
 
         return self.id
 
+    def __eq__(self, other):
+        return isinstance(other, Recipient) and self.phone_id == other.phone_id
+
+    def __hash__(self):
+        return hash(self.phone_id)
+
     @classmethod
     def canonical_nb(cls, text):
         if "@" in text:
@@ -340,7 +346,10 @@ class AddressBook:
         r = self.phone_map.get(cid)
         return r.name if r else cid
 
-    def get_recipient(self, cid):
+    def get_recipient(self, cid, canonical=False):
+        if canonical:
+            cid = Recipient.canonical_nb(cid) or cid
+
         r = self.phone_map.get(cid)
         return r or Recipient(cid)
 
@@ -895,13 +904,334 @@ def reorg_pics(path):
     print("Moved %s / %s pics (%s skipped, %s same)" % (moved, count, skipped, same))
 
 
+def to_ts(ts, fmt, pm="%p"):
+    if " 00:" in ts:
+        return datetime.datetime.strptime(ts, fmt + " %H:%M" + pm)
+
+    return datetime.datetime.strptime(ts, fmt + " %I:%M" + pm)
+
+
+def is_office_hours(ts):
+    return 9 <= ts.hour <= 17
+
+
+class Call:
+
+    length = None
+
+    def __init__(self, ab, line):
+        items = line.split(",")
+        self.dayname = items[1]
+        self.sday = items[2]
+        self.stime = items[3]
+        ts = "%s %s" % (self.sday, self.stime)
+        self.timestamp = to_ts(ts, "%m/%d/%Y")
+        self.callee = items[4]
+        self.recipient = ab.get_recipient(self.callee, canonical=True)
+        self.office_hours = is_office_hours(self.timestamp)
+        self.rate_code = items[7]
+        self.feature = items[9]
+        self.charge = float(items[-1])
+        if len(items) == 13:
+            self.dest = items[5]
+            self.is_sms = None
+            try:
+                self.length = int(items[6])
+
+            except Exception as e:
+                pass
+
+            self.incoming = self.dest.startswith("INCOMING")
+
+        else:
+            self.is_sms = items[5]
+            self.incoming = items[10] == "Rcvd"
+
+    def __repr__(self):
+        return "%s" % (self.recipient or self.callee)
+
+
+def setrep(label, items):
+    return "%s %s" % (len(items), label)
+
+
+class CalleeRecap:
+    def __init__(self, recipient):
+        self.recipient = recipient
+        self.calls = []
+
+    @property
+    def interactions(self):
+        return len(self.calls)
+
+    @property
+    def phone_calls(self):
+        return [c for c in self.calls if not c.is_sms]
+
+    @property
+    def sms_texts(self):
+        return [c for c in self.calls if c.is_sms]
+
+    @property
+    def length(self):
+        return sum(c.length for c in self.calls if c.length)
+
+    def __lt__(self, other):
+        return self.interactions < other.interactions
+
+    def __repr__(self):
+        res = []
+        mins = self.length
+        if mins:
+            mins = " [%s m]" % mins
+
+        res.append("%s calls%s" % (len(self.phone_calls), mins or ""))
+        res.append("%s sms" % len(self.sms_texts))
+        non_office = [c for c in self.calls if not c.office_hours]
+        if non_office:
+            res.append("%s at night" % len(non_office))
+
+        return "%s: %s" %  (", ".join(res), self.recipient)
+
+    def category_overview(self, items, category=None):
+        incoming = [c for c in items if c.incoming]
+        outcoming = [c for c in items if not c.incoming]
+        info = []
+        if category:
+            info.append("; %s:" % category)
+
+        if incoming:
+            info.append(setrep("in", incoming))
+
+        if outcoming:
+            info.append(setrep("out", outcoming))
+
+        return " ".join(info)
+
+    def type_overview(self, label, items):
+        info = []
+        office = [c for c in items if c.office_hours]
+        if office:
+            info.append(self.category_overview(office))
+
+        non_office = [c for c in items if not c.office_hours]
+        if non_office:
+            info.append(self.category_overview(non_office, category="night"))
+
+        res = setrep(label, items)
+        if info:
+            res += " [%s]" % " ".join(info)
+
+        return res
+
+    def add_detail(self, result, label, items):
+        if items:
+            res = []
+            total = 0
+            by_day = defaultdict(list)
+            for item in items:
+                assert isinstance(item.timestamp, datetime.datetime)
+                key = item.timestamp.strftime("%m-%d")
+                if item.timestamp.weekday() in (5, 6):
+                    key += "*"
+
+                by_day[key].append(item)
+
+            for day, day_items in sorted(by_day.items()):
+                detail = []
+                for item in day_items:
+                    x = item.timestamp.strftime("%H:%M")
+                    if not item.incoming:
+                        x = "+%s" % x
+
+                    if item.is_sms:
+                        if "Pict" in item.is_sms:
+                            x += "*"
+
+                    if item.length:
+                        x += " %sm" % item.length
+                        total += item.length
+
+                    detail.append(x)
+
+                res.append("  %s: %s" % (day, ", ".join(detail)))
+
+            result.append("%s:\n  %s" % (label, "\n  ".join(res)))
+
+    def overview(self, detail):
+        calls = [c for c in self.calls if not c.is_sms]
+        sms = [c for c in self.calls if c.is_sms]
+        res = "%s; %s" % (self.type_overview("calls", calls), self.type_overview("sms", sms))
+        if detail:
+            detail = []
+            self.add_detail(detail, "call", [c for c in self.calls if not c.is_sms])
+            self.add_detail(detail, "sms", [c for c in self.calls if c.is_sms])
+            if detail:
+                res = "%s\n  %s" % (res, "\n  ".join(detail))
+
+        return res
+
+    def display(self, detail):
+        by_month = {}
+        for c in sorted(self.calls, key=lambda x: x.timestamp):
+            assert isinstance(c, Call)
+            m = c.timestamp.strftime("%Y-%m")
+            rr = by_month.get(m)
+            if rr is None:
+                rr = CalleeRecap(self.recipient)
+                by_month[m] = rr
+
+            rr.calls.append(c)
+
+        for m, rr in sorted(by_month.items()):
+            print("%s: %s total, %s" % (m, len(rr.calls), rr.overview(detail)))
+
+        print("----")
+
+
+class Callers:
+    def __init__(self, ab, recipient, start=None, end=None):
+        self.ab = ab
+        self.recipient = recipient
+        self.by_callee = {}
+        self.calls = []
+        self.start = start and datetime.datetime.strptime(start, "%Y%m")
+        self.end = end and datetime.datetime.strptime(end, "%Y%m")
+
+    def __repr__(self):
+        return "%s" % self.recipient
+
+    def display(self, detail):
+        for callee in sorted(self.by_callee.values(), key=lambda x: -x.interactions):
+            if len(callee.recipient.phone_id) > 6:
+                print(callee)
+                callee.display(detail)
+
+    def add_call(self, line):
+        c = Call(self.ab, line)
+        if (self.start is None or self.start < c.timestamp) and (self.end is None or self.end > c.timestamp):
+            self.calls.append(c)
+
+    def _get_callee_recap(self, r):
+        recap = self.by_callee.get(r)
+        if recap is None:
+            recap = CalleeRecap(r)
+            self.by_callee[r] = recap
+
+        return recap
+
+    def finalize(self):
+        for c in self.calls:
+            recap = self._get_callee_recap(c.recipient)
+            recap.calls.append(c)
+
+
+RX_CALL = re.compile(r"^\d+,.+")
+RX_TEXT = re.compile(r"^\s+\d+,.+")
+RX_CURRENT = re.compile(r"^\d+\|")
+
+
+class CurrentPeriod:
+    def __init__(self, recipient):
+        self.recipient = recipient
+        self.by_type = defaultdict(int)
+        self.total = 0
+        self.length = 0
+        self.calls = []
+
+    def __repr__(self):
+        return "%s %s" % (self.total, self.recipient)
+
+    def add_call(self, items):
+        self.calls.append(items)
+        key = items[4]
+        if "Messaging" not in key:
+            key = "in" if items[4] == "INCOMING" else "out"
+            self.length += int(items[6])
+
+        ts = "2022/%s %s" % (items[1], items[2])
+        ts = to_ts(ts, "%Y/%m/%d", pm=" %p")
+        if not is_office_hours(ts):
+            key = "night %s" % key
+
+        self.total += 1
+        self.by_type[key] += 1
+
+
+def show_call_log(target):
+    t, _, start = target.partition(":")
+    detail = t.startswith("+")
+    start, _, end = start.partition(":")
+    ab = AddressBook(CCPATH)
+    path = os.path.join(CCPATH, "call-log")
+    callers = {}
+    current_period = {}
+    target = ab.get_recipient(t, canonical=True)
+    for fname in os.listdir(path):
+        if not fname.endswith(".csv"):
+            continue
+
+        current = None
+        with open(os.path.join(path, fname)) as fh:
+            line_number = 0
+            for line in fh:
+                line_number += 1
+                line = line.rstrip()
+                if not line or ",Data Transfer," in line or ",Intl Rated as Domestic," in line:
+                    continue
+
+                if line.startswith("Mobile Number:") or line.startswith("PhoneNumber :"):
+                    _, _, nb = line.partition(":")
+                    nb = nb.strip().strip(",")
+                    r = ab.get_recipient(nb, canonical=True)
+                    assert r
+                    current = callers.get(r)
+                    if current is None:
+                        current = Callers(ab, r, start=start or None, end=end or None)
+                        callers[r] = current
+
+                    continue
+
+                if current is None or current.recipient.phone_id != target.phone_id:
+                    continue
+
+                if RX_CALL.match(line):
+                    current.add_call(line)
+
+                if RX_TEXT.match(line):
+                    current.add_call(line)
+
+                if RX_CURRENT.match(line):
+                    items = line.split("|")
+                    if items[4] != "Web":
+                        nb = items[3]
+                        if len(nb) > 6:
+                            r = ab.get_recipient(nb, canonical=True)
+                            x = current_period.get(r)
+                            if x is None:
+                                x = CurrentPeriod(r)
+                                current_period[r] = x
+
+                            x.add_call(items)
+
+    t = callers[target]
+    t.finalize()
+    t.display(detail)
+    if current_period:
+        pass
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("src")
-    parser.add_argument("--genonly", action="store_true")
+    parser.add_argument("--genonly", "-g", action="store_true")
     parser.add_argument("--limit", "-l", type=int)
     args = parser.parse_args()
     src = args.src
+    if src and (src.startswith("+1") or src.startswith("1")):
+        show_call_log(src)
+        sys.exit(0)
+
     if src and src.endswith(".csv"):
         ib = IBChats(src)
         ib.process_csv()
