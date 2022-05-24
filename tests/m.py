@@ -282,7 +282,10 @@ class Recipient:
         self.category = category
         self.phone_id = phone_id
         self.has_name = bool(name)
-        self.id = phone_id.strip("+").lstrip("1")
+        self.id = phone_id.strip("+")
+        if self.id.startswith("1"):
+            self.id = self.id[1:]
+
         self.name = name or self.id
         self.fname = RX_FNAME.sub(".", self.name.lower())
 
