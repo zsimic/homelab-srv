@@ -121,7 +121,7 @@ def find_base_folder(path=None, site=None) -> (Path, str):
         local_site = Path(".") / SITE_YML
         local_sites = Path("..") / SITE_SPEC_YML
         if local_sites.exists() and local_site.exists():
-            return local_site.absolute().resolve().parent, "cwd", local_site.name
+            return local_site.absolute().resolve().parent, "cwd", local_site.parent.name
 
         for line in runez.readlines(CONFIG_PATH, first=1):
             path, site = base_from_spec(os.path.expanduser(line), site)

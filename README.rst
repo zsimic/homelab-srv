@@ -15,5 +15,5 @@ Installation
 ============
 
 ```
-    pickley install https://github.com/zsimic/homelab-srv.git
+pickley install https://github.com/zsimic/homelab-srv.git
 ```
