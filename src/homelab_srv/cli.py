@@ -19,7 +19,7 @@ import runez
 from runez.render import PrettyTable
 
 import homelab_srv
-from homelab_srv import CONFIG_PATH, GSRV, HomelabSite, read_yml, run_rsync, run_ssh, run_uncaptured, SITE_SPEC_YML, SRV_RUN
+from homelab_srv import CONFIG_PATH, GSRV, HomelabSite, read_yml, run_rsync, run_ssh, run_uncaptured, SITE_SPEC_YML, SITE_YML, SRV_RUN
 
 
 def colored_port(port):
@@ -117,6 +117,11 @@ def find_base_folder(path=None, site=None) -> (Path, str):
     if not runez.DEV.current_test():  # pragma: no cover
         if SRV_RUN.is_dir():
             return SRV_RUN, None, None
+
+        local_site = Path(".") / SITE_YML
+        local_sites = Path("..") / SITE_SPEC_YML
+        if local_sites.exists() and local_site.exists():
+            return local_sites.absolute(), "cwd", local_site.name
 
         for line in runez.readlines(CONFIG_PATH, first=1):
             path, site = base_from_spec(os.path.expanduser(line), site)

@@ -41,7 +41,7 @@ def test_sample(cli):
         cli.expect_failure("-n meta set-folder ..", "does not exist")  # No _config.yml
         cli.expect_success("-n meta set-folder .", "Would write")
 
-        if not runez.WINDOWS:
+        if not runez.SYS_INFO.platform_id.is_windows:
             cli.expect_success("meta mkpass foo")
 
         cli.expect_failure("-n -s:rps meta set-folder foo", "can only be ran from orchestrator")
