@@ -922,33 +922,16 @@ class Call:
 
     length = None
 
-    def __init__(self, ab, line):
-        items = line.split(",")
-        self.dayname = items[1]
-        self.sday = items[2]
-        self.stime = items[3]
-        ts = "%s %s" % (self.sday, self.stime)
-        self.timestamp = to_ts(ts, "%m/%d/%Y")
-        self.callee = items[4]
-        self.recipient = ab.get_recipient(self.callee, canonical=True)
+    def __init__(self, ab, timestamp, incoming, callee, length, dest=None, is_sms=None):
+        self.ab = ab
+        self.timestamp = timestamp
+        self.incoming = incoming
+        self.callee = callee
+        self.length = int(length)
+        self.recipient = ab.get_recipient(callee, canonical=True)
         self.office_hours = is_office_hours(self.timestamp)
-        self.rate_code = items[7]
-        self.feature = items[9]
-        self.charge = float(items[-1])
-        if len(items) == 13:
-            self.dest = items[5]
-            self.is_sms = None
-            try:
-                self.length = int(items[6])
-
-            except Exception as e:
-                pass
-
-            self.incoming = self.dest.startswith("INCOMING")
-
-        else:
-            self.is_sms = items[5]
-            self.incoming = items[10] == "Rcvd"
+        self.dest = dest  # ex: SAN JOSE
+        self.is_sms = is_sms
 
     def __repr__(self):
         return "%s" % (self.recipient or self.callee)
@@ -1093,6 +1076,9 @@ class CalleeRecap:
 
 
 class Callers:
+    parser_headers = None
+    current_parser = None
+
     def __init__(self, ab, recipient, start=None, end=None):
         self.ab = ab
         self.recipient = recipient
@@ -1110,10 +1096,65 @@ class Callers:
                 print(callee)
                 callee.display(detail)
 
-    def add_call(self, line):
-        c = Call(self.ab, line)
+    def set_parser(self, parser, headers):
+        self.parser_headers = [x.strip() for x in headers]
+        self.current_parser = parser
+
+    def do_parse(self, line):
+        line = line.strip()
+        c = self.current_parser(line)
+        if not c:
+            if c is None:
+                self.current_parser = None
+
+            return
+
         if (self.start is None or self.start < c.timestamp) and (self.end is None or self.end > c.timestamp):
             self.calls.append(c)
+
+    def parse_csv_call(self, line):
+        items = line.split(",")
+        if len(items) == 1 or not items[0]:
+            return None
+
+        length = 0
+        dest = None
+        if len(items) == 13:
+            dest = items[5]
+            is_sms = None
+            length = items[6]
+            incoming = dest.startswith("INCOMING")
+
+        else:
+            is_sms = items[5]
+            incoming = items[10] == "Rcvd"
+
+        ts = "%s %s" % (items[2], items[3])
+        timestamp = to_ts(ts, "%m/%d/%Y")
+        callee = items[4]
+        c = Call(self.ab, timestamp, incoming, callee, length, dest=dest, is_sms=is_sms)
+        return c
+
+    def parse_tsv_call(self, line):
+        items = line.split("|")
+        if len(items) < 5:
+            return None
+
+        # timestamp = datetime.datetime.strptime(items[1], "%m/%d/%Y %I:%M:%S %p")
+        timestamp = to_ts(items[1], "%m/%d/%Y", pm=":%S %p")
+        callee = items[2]
+        dest = items[3]
+        incoming = dest.startswith("INCOMING")
+        if len(items) == 6:
+            is_sms = None
+            length = int(items[5])
+
+        else:
+            is_sms = items[4]
+            length = 0
+
+        c = Call(self.ab, timestamp, incoming, callee, length, dest=dest, is_sms=is_sms)
+        return c
 
     def _get_callee_recap(self, r):
         recap = self.by_callee.get(r)
@@ -1127,11 +1168,6 @@ class Callers:
         for c in self.calls:
             recap = self._get_callee_recap(c.recipient)
             recap.calls.append(c)
-
-
-RX_CALL = re.compile(r"^\d+,.+")
-RX_TEXT = re.compile(r"^\s+\d+,.+")
-RX_CURRENT = re.compile(r"^\d+\|")
 
 
 class CurrentPeriod:
@@ -1171,7 +1207,7 @@ def show_call_log(target):
     current_period = {}
     target = ab.get_recipient(t, canonical=True)
     for fname in os.listdir(path):
-        if not fname.endswith(".csv"):
+        if not fname.endswith(".csv") and not fname.endswith(".tsv"):
             continue
 
         current = None
@@ -1198,24 +1234,17 @@ def show_call_log(target):
                 if current is None or current.recipient.phone_id != target.phone_id:
                     continue
 
-                if RX_CALL.match(line):
-                    current.add_call(line)
+                if current.current_parser:
+                    current.do_parse(line)
+                    continue
 
-                if RX_TEXT.match(line):
-                    current.add_call(line)
+                if line.startswith("Item,Day,Date,Time"):
+                    current.set_parser(current.parse_csv_call, line.split(","))
+                    continue
 
-                if RX_CURRENT.match(line):
-                    items = line.split("|")
-                    if items[4] != "Web":
-                        nb = items[3]
-                        if len(nb) > 6:
-                            r = ab.get_recipient(nb, canonical=True)
-                            x = current_period.get(r)
-                            if x is None:
-                                x = CurrentPeriod(r)
-                                current_period[r] = x
-
-                            x.add_call(items)
+                if line.startswith("SNO | Date & Time"):
+                    current.set_parser(current.parse_tsv_call, line.split("|"))
+                    continue
 
     t = callers[target]
     t.finalize()
